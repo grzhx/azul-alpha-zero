@@ -1,0 +1,260 @@
+{
+  "table_id": "926871859",
+  "table_url": "https://boardgamearena.com/tableview?table=926871859",
+  "game_name": "Azul",
+  "round": 2,
+  "current": 0,
+  "players": [
+    {
+      "id": "92785155",
+      "name": "grzhx",
+      "score": 4,
+      "wall": [
+        [
+          0,
+          0,
+          0,
+          1,
+          0
+        ],
+        [
+          0,
+          0,
+          0,
+          1,
+          0
+        ],
+        [
+          0,
+          1,
+          0,
+          0,
+          0
+        ],
+        [
+          0,
+          0,
+          0,
+          0,
+          0
+        ],
+        [
+          0,
+          0,
+          0,
+          0,
+          0
+        ]
+      ],
+      "patterns": [
+        {
+          "count": 0,
+          "color": null,
+          "capacity": 1
+        },
+        {
+          "count": 2,
+          "color": 4,
+          "capacity": 2
+        },
+        {
+          "count": 0,
+          "color": null,
+          "capacity": 3
+        },
+        {
+          "count": 4,
+          "color": 3,
+          "capacity": 4
+        },
+        {
+          "count": 0,
+          "color": null,
+          "capacity": 5
+        }
+      ],
+      "floor": [
+        5
+      ],
+      "completed_rows": 0
+    },
+    {
+      "id": "90171543",
+      "name": "EtienneKZO",
+      "score": 2,
+      "wall": [
+        [
+          0,
+          1,
+          0,
+          0,
+          0
+        ],
+        [
+          0,
+          0,
+          1,
+          0,
+          0
+        ],
+        [
+          0,
+          0,
+          1,
+          0,
+          0
+        ],
+        [
+          0,
+          0,
+          0,
+          0,
+          0
+        ],
+        [
+          0,
+          0,
+          0,
+          0,
+          0
+        ]
+      ],
+      "patterns": [
+        {
+          "count": 0,
+          "color": null,
+          "capacity": 1
+        },
+        {
+          "count": 2,
+          "color": 0,
+          "capacity": 2
+        },
+        {
+          "count": 0,
+          "color": null,
+          "capacity": 3
+        },
+        {
+          "count": 3,
+          "color": 4,
+          "capacity": 4
+        },
+        {
+          "count": 5,
+          "color": 2,
+          "capacity": 5
+        }
+      ],
+      "floor": [],
+      "completed_rows": 0
+    }
+  ],
+  "sources": [
+    [
+      2,
+      1,
+      1,
+      0,
+      0
+    ],
+    [
+      0,
+      0,
+      0,
+      0,
+      0
+    ],
+    [
+      0,
+      0,
+      0,
+      0,
+      0
+    ],
+    [
+      0,
+      0,
+      0,
+      0,
+      0
+    ],
+    [
+      0,
+      0,
+      0,
+      0,
+      0
+    ],
+    [
+      2,
+      1,
+      2,
+      2,
+      0
+    ]
+  ],
+  "player_count": 2,
+  "factory_count": 5,
+  "token_available": false,
+  "token_owner": 1,
+  "next_start": 1,
+  "bag_count": 60,
+  "bag_colors": [
+    11,
+    14,
+    10,
+    13,
+    12
+  ],
+  "bag_colors_exact": true,
+  "phase": "选砖",
+  "actionable": true,
+  "terminal": false,
+  "log": [
+    "新的一轮开始了! 05:41",
+    "EtienneKZO 拿取 2 块 青色 瓷砖 13:05",
+    "EtienneKZO 将 2 块 青色 瓷砖放置在第 4 行上 13:05",
+    "grzhx 拿取 2 块 青色 瓷砖 20:05",
+    "grzhx 将 2 块 青色 瓷砖放置在第 3 行上 20:05",
+    "EtienneKZO 获得起始玩家标记，他/她将成为下一轮的起始玩家 20:06",
+    "EtienneKZO 拿取 2 块 黄色 瓷砖和起始玩家标记 20:06",
+    "EtienneKZO 将 2 块 黄色 瓷砖放置在第 2 行上 20:06",
+    "grzhx 拿取 1 块 青色 瓷砖 20:07",
+    "grzhx 将 1 块 青色 瓷砖放置在第 3 行上 20:07",
+    "EtienneKZO 拿取 2 块 蓝色 瓷砖 20:07",
+    "EtienneKZO 将 2 块 蓝色 瓷砖放置在第 3 行上 20:07",
+    "grzhx 拿取 2 块 黑色 瓷砖 20:07",
+    "grzhx 将 2 块 黑色 瓷砖放置在第 4 行上 20:07",
+    "EtienneKZO 拿取 1 块 蓝色 瓷砖 20:08",
+    "EtienneKZO 将 1 块 蓝色 瓷砖放置在第 3 行上 20:08",
+    "grzhx 拿取 1 块 黑色 瓷砖 20:08",
+    "grzhx 将 1 块 黑色 瓷砖放置在第 1 行上 20:08",
+    "EtienneKZO 拿取 3 块 红色 瓷砖 20:09",
+    "EtienneKZO 将 3 块 红色 瓷砖放置在第 5 行上 20:09",
+    "grzhx 拿取 2 块 红色 瓷砖 20:09",
+    "grzhx 将 2 块 红色 瓷砖放置在第 2 行上 20:09",
+    "EtienneKZO 拿取 2 块 黄色 瓷砖 20:10",
+    "EtienneKZO 将 2 块 黄色 瓷砖放置在第 1 行上 20:10",
+    "EtienneKZO 放置 1 块 黄色 瓷砖并获得 1 分 20:10",
+    "grzhx 放置 1 块 黑色 瓷砖并获得 1 分 20:10",
+    "EtienneKZO 放置 1 块 黄色 瓷砖并获得 1 分 20:10",
+    "grzhx 放置 1 块 红色 瓷砖并获得 2 分 20:10",
+    "EtienneKZO 放置 1 块 蓝色 瓷砖并获得 2 分 20:10",
+    "grzhx 放置 1 块 青色 瓷砖并获得 1 分 20:10",
+    "EtienneKZO 因地板行失去 2 分 20:10",
+    "新的一轮开始了! 20:10",
+    "EtienneKZO 拿取 2 块 红色 瓷砖 20:10",
+    "EtienneKZO 将 2 块 红色 瓷砖放置在第 5 行上 20:10",
+    "grzhx 拿取 2 块 黑色 瓷砖 20:10",
+    "grzhx 将 2 块 黑色 瓷砖放置在第 4 行上 20:10",
+    "EtienneKZO 拿取 2 块 蓝色 瓷砖 20:11",
+    "EtienneKZO 将 2 块 蓝色 瓷砖放置在第 2 行上 20:11",
+    "grzhx 获得起始玩家标记，他/她将成为下一轮的起始玩家 20:11",
+    "grzhx 拿取 2 块 青色 瓷砖和起始玩家标记 20:11",
+    "grzhx 将 2 块 青色 瓷砖放置在第 2 行上 20:11",
+    "EtienneKZO 拿取 1 块 青色 瓷砖 20:11",
+    "EtienneKZO 将 1 块 青色 瓷砖放置在第 4 行上 20:11"
+  ],
+  "raw_state_id": "bga:926871859:31:1nxlh12"
+}

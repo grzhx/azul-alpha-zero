@@ -1,0 +1,43 @@
+# Local environments and editors
+/.venv/
+/venv/
+/.idea/
+/.vscode/
+.env
+.env.*
+!.env.example
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.ruff_cache/
+.DS_Store
+Thumbs.db
+
+# Native build outputs
+/build*/
+/cmake-build*/
+*.obj
+*.o
+*.pdb
+*.ilk
+*.exe
+*.dll
+*.so
+*.dylib
+*.lib
+*.a
+*.exp
+
+# Training, evaluations, downloaded references
+/runs/
+/reports/
+/artifacts/
+/docs/sources/
+*.pt
+*.pth
+*.ckpt
+*.npz
+*.log
+*.pid
+/PLAN.md
+/CHECKLIST.md

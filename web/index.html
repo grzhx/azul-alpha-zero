@@ -1,0 +1,66 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="azul-token" content="__TOKEN__">
+  <title>Azul · 本地对战</title>
+  <link rel="stylesheet" href="/style.css">
+  <link rel="stylesheet" href="/config.css">
+  <script src="/app.js" defer></script>
+</head>
+<body>
+<main>
+  <header><div><h1>Azul <span>本地对战</span></h1><p>人机 / 人人 · 原版双人彩色墙面</p></div><span class="badge" id="device-badge">CPU / CUDA</span></header>
+  <section class="settings panel" aria-label="对局设置">
+    <div class="model-field"><label for="checkpoint">对手模型</label><select id="checkpoint"><option value="">正在读取模型…</option></select><small id="model-info">刷新后可选择训练新产生的 checkpoint。</small></div>
+    <button id="refresh" class="secondary">刷新模型</button>
+    <div><label for="mode">对局模式</label><select id="mode"><option value="ai">人机对战</option><option value="human">人人对战</option></select></div>
+    <div id="human-field"><label for="human">先后手</label><select id="human"><option value="0">我先手</option><option value="1">AI 先手</option></select></div>
+    <div><label for="device">计算设备</label><select id="device"><option value="cuda" selected>GPU（CUDA）</option><option value="cpu">CPU</option></select></div>
+    <div><label for="simulations">AI 搜索次数</label><input id="simulations" type="number" min="2" max="4096" value="512"></div>
+    <div><label for="candidates">根候选数</label><input id="candidates" type="number" min="1" max="180" value="32"></div>
+    <div><label for="chance-cap">机会样本上限</label><input id="chance-cap" type="number" min="1" max="256" value="128"></div>
+    <div class="seed-field"><label for="seed">随机种子（可选）</label><input id="seed" inputmode="numeric" placeholder="留空随机"></div>
+    <label class="check"><input id="manual-deal" type="checkbox">手动发牌（新对局生效）</label>
+    <button id="new">开始新对局</button>
+  </section>
+  <details class="panel advanced"><summary>AI 高级配置</summary><div class="config-grid">
+    <div><label for="max-depth">搜索深度上限</label><input id="max-depth" type="number" min="1" max="512" value="128"></div>
+    <div><label for="chance-initial">机会初始样本</label><input id="chance-initial" type="number" min="1" max="256" value="4"></div>
+    <div><label for="chance-coefficient">样本增长系数</label><input id="chance-coefficient" type="number" min="0.01" max="16" step="0.1" value="2"></div>
+    <div><label for="chance-exponent">样本增长指数</label><input id="chance-exponent" type="number" min="0" max="1" step="0.1" value="0.5"></div>
+    <div><label for="chance-sensitivity">机会波动敏感度</label><input id="chance-sensitivity" type="number" min="0" max="10" step="0.1" value="1"></div>
+    <div><label for="q-mode">Q 缩放模式</label><select id="q-mode"><option value="0">原始 min/max</option><option value="1" selected>范围下限</option><option value="2">固定尺度</option></select></div>
+    <div><label for="q-floor">Q 范围下限</label><input id="q-floor" type="number" min="0.00001" max="2" step="0.05" value="0.25"></div>
+    <div><label for="value-scale">Q 价值倍率</label><input id="value-scale" type="number" min="0.00001" max="10" step="0.05" value="0.1"></div>
+    <div><label for="maxvisit-init">访问次数偏移</label><input id="maxvisit-init" type="number" min="0" max="1000" value="50"></div>
+    <div><label for="gumbel-scale">探索噪声强度</label><input id="gumbel-scale" type="number" min="0" max="10" step="0.1" value="0"></div>
+    <div><label for="afterstate-prior">补砖前价值权重</label><input id="afterstate-prior" type="number" min="0" max="16" step="0.05" value="0.25"></div>
+    <div><label for="cache-capacity">网络缓存条目</label><input id="cache-capacity" type="number" min="0" max="65536" value="4096"></div>
+    <label class="check"><input id="subtree-reuse" type="checkbox" checked>保留子树</label><label class="check"><input id="cuda-graph" type="checkbox" checked>CUDA Graph</label><label class="check"><input id="bf16" type="checkbox">BF16 推理</label>
+  </div><div class="config-actions"><button id="defaults" class="secondary">恢复棋力优先配置</button><button id="apply-config" disabled>应用到当前对局</button></div></details>
+  <div id="error" class="error" role="alert" hidden></div>
+  <section class="status panel"><div><strong id="status" role="status" aria-live="polite">请选择模型并开始对局</strong><div id="game-meta" class="muted"></div></div><div class="tools"><button id="retry" class="secondary" hidden>重试 AI</button><button id="undo" class="secondary" disabled>撤回上次行动</button></div></section>
+  <section id="situation-panel" class="panel situation-panel" hidden aria-label="局势评估">
+    <div class="situation-heading"><div><h2>局势条</h2><span id="situation-note" class="muted">模型估计</span></div><strong id="situation-summary"></strong></div>
+    <div id="situation-bar" class="situation-bar" role="img" aria-label="局势评估"><span id="situation-human" class="situation-segment human"></span><span id="situation-draw" class="situation-segment draw"></span><span id="situation-ai" class="situation-segment ai"></span></div>
+    <div class="situation-labels"><span id="situation-human-label">你</span><span id="situation-draw-label">和棋</span><span id="situation-ai-label">AI</span></div>
+  </section>
+  <details id="advice-panel" class="panel advice-panel" hidden>
+    <summary>AI 建议</summary>
+    <div class="advice-controls"><label for="advice-budget">搜索预算</label><select id="advice-budget"><option value="quick">快速 · 64</option><option value="standard" selected>标准 · 256</option><option value="deep">深入 · 1024</option><option value="maximum">极深 · 4096</option><option value="infinite">无限 · 持续搜索</option></select><button id="advice-start" class="secondary">重新分析</button><button id="advice-stop" class="secondary" hidden>停止</button></div>
+    <p id="advice-status" class="muted">展开后分析当前局面。</p>
+    <ol id="advice-list" class="advice-list"></ol>
+  </details>
+  <div id="welcome" class="panel welcome"><h2>从工厂选砖，铺满你的墙面</h2><p>选择一个 checkpoint，点击“开始新对局”。</p><p>轮到你时：① 点击工厂或中央的一种颜色　② 点击自己棋盘上的目标行或地板。</p></div>
+  <div id="game" hidden>
+    <section id="deal-panel" class="panel" hidden><h2>手动发牌 · 每个工厂 4 块</h2><p id="deal-stock"></p><p class="muted">按工厂 1 到 5、每厂从左到右抽取。先用完旧袋，再使用弃砖；颜色数量必须合法。</p><div id="deal-slots" class="factories"></div><p id="deal-status" role="status"></p><button id="deal-submit" disabled>确认发牌</button><button id="deal-clear" class="secondary">清空选择</button></section>
+    <section class="panel supply" aria-label="拿砖区域"><div class="section-title"><h2>工厂与中央</h2><span id="round" class="badge"></span></div><div id="factories" class="factories"></div><div id="center" class="center"></div><div id="selection" class="selection" aria-live="polite">请选择一组彩砖</div></section>
+    <div id="boards" class="boards"></div>
+    <section class="panel"><h2>最近行动</h2><p id="last-move" class="muted"></p><ol id="history" class="history"></ol></section>
+  </div>
+  <details class="panel rules"><summary>基本规则与操作</summary><p>一次拿走同一来源的一种颜色的全部砖。工厂剩余砖移入中央；首次从中央拿砖的人领取下轮先手标记，标记先占地板格。</p><p>所拿砖只能放入一条合法图案行，超出容量部分落地；也可以整组放地板。全部彩砖取完后，完成行从上到下各移一块上墙，立即计分。未完成行留到下轮。</p><p>地板累计扣分：1、2、4、6、8、11、14。横纵相连分别计分；有人完成墙面横行后本轮结束游戏，追加横行 +2、竖列 +7、完整同色 +10。同分时完整横行多者胜。</p><p>墙面浅色格是预印位置，实色砖才代表已经铺上。地板按颜色汇总显示，位置顺序不影响累计扣分。checkpoint 在开局时固定，刷新列表或训练继续不会改变当前对手。</p></details>
+</main>
+</body>
+</html>

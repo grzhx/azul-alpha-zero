@@ -1,0 +1,47 @@
+name: Build and Test
+
+on:
+  push:
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  native:
+    strategy:
+      matrix:
+        os: [ubuntu-latest, windows-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - name: Configure
+        run: cmake -S . -B build -DCMAKE_BUILD_TYPE=Release
+      - name: Build
+        run: cmake --build build --config Release --parallel
+      - name: Native tests
+        run: ctest --test-dir build -C Release --output-on-failure
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Install CPU dependencies
+        run: |
+          python -m pip install torch --index-url https://download.pytorch.org/whl/cpu
+          python -m pip install numpy
+      - name: Search and learning tests
+        run: |
+          python tests/test_ai.py
+          python tests/test_optimized.py
+          python tests/test_checkpoint_storage.py
+          python tests/test_public_origin.py
+      - name: Exact resume and historical pool
+        run: |
+          python tests/test_resume.py
+          python tests/test_optimized_resume.py
+          python tests/test_retune.py
+          python tests/test_history_pool.py
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - name: BGA collector
+        run: node tests/test_bga_collector.js

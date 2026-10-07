@@ -1,0 +1,38 @@
+<!doctype html>
+<html lang="zh-CN"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><meta name="monitor-token" content="__TOKEN__"><title>BGA Azul 实时监控</title><link rel="stylesheet" href="/style.css"><link rel="stylesheet" href="/advice.css"><script src="/app.js" defer></script></head>
+<body><main>
+  <header><div><h1>BGA Azul <span>实时监控</span></h1><p>双人 / 三人 · 彩色墙面</p></div><span id="connection" class="badge offline">等待数据</span></header>
+  <section class="panel status"><div><strong id="message">等待 BGA Azul 对局</strong><p id="table-meta">进入 BGA 对局后开始同步。</p></div><a id="table-link" class="button" hidden target="_blank" rel="noreferrer">打开 BGA 对局</a></section>
+  <section class="panel mount-panel">
+    <div><h2>BGA 一键挂载</h2><p class="muted">将右侧按钮拖到浏览器书签栏；以后在任意 BGA 页面点击该书签。</p></div>
+    <a id="mount-bookmark" class="button bookmark" draggable="true" title="拖到浏览器书签栏">挂载 Azul 监控</a>
+  </section>
+  <div id="error" class="error" hidden></div>
+  <div id="waiting" class="panel waiting"><h2 id="waiting-title">等待 BGA 连接</h2><p id="waiting-copy">请保持 BGA 标签和本页打开。</p></div>
+  <div id="game" hidden>
+    <section class="panel"><div class="section-title"><h2>工厂与中央</h2><span id="round" class="badge"></span></div><div id="factories" class="factories"></div><div id="center" class="center"></div></section>
+    <div id="boards" class="boards"></div>
+    <section id="situation-panel" class="panel situation-panel">
+      <div class="situation-heading"><div><h2>局势</h2><p id="situation-note" class="muted">等待模型评估</p></div><strong id="situation-summary">分析中</strong></div>
+      <div class="situation-bar" role="img" aria-label="双方胜率与平局概率">
+        <span id="situation-left" class="situation-segment left"></span>
+        <span id="situation-draw" class="situation-segment draw"></span>
+        <span id="situation-right" class="situation-segment right"></span>
+      </div>
+      <div class="situation-labels"><span id="situation-label-left">左侧玩家</span><span id="situation-label-draw">平局</span><span id="situation-label-right">右侧玩家</span></div>
+      <div id="situation-ranks" class="situation-ranks" hidden></div>
+    </section>
+    <section class="panel advice-panel">
+      <div class="section-title"><div><h2>AI 建议</h2><p id="advice-side" class="muted">针对当前行动方</p></div><span id="advice-state" class="badge offline">等待局面</span></div>
+      <div class="advice-controls">
+        <label>模型<select id="advice-model"><option value="">正在读取 checkpoint…</option></select></label>
+        <label>搜索预算<select id="advice-budget"><option value="quick">快速 · 64</option><option value="standard">标准 · 256</option><option value="deep">深入 · 1024</option><option value="maximum" selected>极深 · 4096</option><option value="infinite">无限 · 持续搜索</option></select></label>
+        <button id="advice-start" class="button" type="button">重新分析</button>
+        <button id="advice-stop" class="secondary" type="button">停止</button>
+      </div>
+      <p id="advice-status" class="muted">等待可分析的走棋局面。</p>
+      <ol id="advice-list" class="advice-list"></ol>
+    </section>
+    <section class="panel"><h2>公开行动记录</h2><ol id="history" class="history"></ol></section>
+  </div>
+</main></body></html>
