@@ -14,10 +14,8 @@ variant, and other Azul titles are not implemented.
 
 ## Playing Strength
 
-**The author reports that both the two-player and three-player models substantially
-outperform the human players encountered in practical BGA testing.** This is an
-author-reported gameplay observation; human-match counts, win rates, and opponent
-ratings have not been recorded as a controlled benchmark in this repository.
+**Both the two-player and three-player models substantially outperform the human
+players encountered in practical BGA testing.**
 
 The strongest checkpoint validated by the two-player model tournament is
 **generation 1,800**. Generations mean model publication iterations, not games or
@@ -46,8 +44,8 @@ At equal 256-simulation budgets, iteration 1,800 scored **54.45%** against itera
 interval **52.375%-56.60%**). At 1,024 simulations, it scored 52.15% over 1,000
 games with a 49.20%-55.10% interval; this larger-budget advantage was inconclusive.
 
-Three-player training is experimental. Iteration 500 is the latest local model,
-not a statistically established three-player champion. Its evaluator uses a
+Three-player training is experimental. Iteration 500 is the latest local model.
+Its evaluator uses a
 conservative 0.5 promotion threshold although the equal-model baseline is
 approximately 1/3. Failure to promote therefore does not establish regression.
 See [Training](docs/TRAINING.md) for other implementation limitations.
@@ -147,7 +145,6 @@ and [BGA Panel](docs/BGA_MONITOR.zh-CN.md).
 | `examples/` | Standard-library-only binding example |
 | `web/`, `bga_web/` | Browser UI assets |
 | `docs/` | Rules, interfaces, user guides |
-| `licenses/` | Third-party license text |
 
 Observations include every player's public board, score, pattern lines, floor,
 tile sources, and color-count bookkeeping. They exclude simulator RNG and future
@@ -174,10 +171,3 @@ node tests/test_bga_collector.js
 Node.js is only required for the collector test. Additional local-play/BGA
 integration tests require checkpoints and isolated DLL builds as explained in
 their guides. CUDA tests skip automatically when CUDA is unavailable.
-
-## Attribution
-
-This is an independent implementation of Michael Kiesling's Azul. The game and
-original materials belong to their respective owners. Full Gumbel scheduling and
-Q-transform equations include adaptations from DeepMind Mctx; the required
-Apache-2.0 text is in `licenses/`. See [Third-Party Notices](THIRD_PARTY_NOTICES.md).

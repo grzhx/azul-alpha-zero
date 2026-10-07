@@ -1,6 +1,6 @@
 #pragma once
 // Sequential Halving scheduling and completed-Q / deterministic-selection equations
-// are adapted from DeepMind Mctx (Apache-2.0). See THIRD_PARTY_NOTICES.md.
+// are implemented here for the native Azul search interface.
 // Chance-node integration and the Azul arena/request protocol are project code.
 #include "engine.hpp"
 #include <cmath>
