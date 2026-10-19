@@ -48,6 +48,23 @@ C++20 原版 Azul 游戏内核与 GPU 纯自对弈框架，支持双人和三人
 
 Git 不上传模型、replay、完整日志和二进制。可从源码训练；小规模示例只用于安装检查。
 
+## 下载 2300 权重与本地人机对战
+
+权重与独立对战包放在 [GitHub Release](https://github.com/grzhx/azul-alpha-zero/releases/tag/v2300)，不混入算法源码：
+
+- [2300 代推理权重](https://github.com/grzhx/azul-alpha-zero/releases/download/v2300/azul-generation-2300.pt)：约 4.15 MB，可跨平台使用的 PyTorch actor。
+- [Windows x64 本地对战 ZIP](https://github.com/grzhx/azul-alpha-zero/releases/download/v2300/azul-2300-local-play-windows-x64.zip)：约 3.99 MB，包含模型、原生 DLL 和独立本地界面。
+- [模型元数据](https://github.com/grzhx/azul-alpha-zero/releases/download/v2300/azul-generation-2300.json)与 [SHA256 校验](https://github.com/grzhx/azul-alpha-zero/releases/download/v2300/SHA256SUMS.txt)。
+
+安装 **64 位 Python 3.11+**，解压 ZIP，双击 **Start-Windows.cmd**。
+首次启动会把 CPU PyTorch 和 NumPy 安装到包内 `.venv`；随后打开 **http://127.0.0.1:8765/**，
+选择 2300 模型和“人机对战”即可。CPU 无需 NVIDIA 显卡，推荐先用 128 或 512 搜索。
+包内说明提供可选 CUDA 安装与缺少 Microsoft 运行库时的处理方法，界面为中文。
+
+主分支保持仅算法代码，独立 Release ZIP 携带自己的本地界面。
+权重不含优化器/replay，不能精确恢复历史 2300 训练状态。
+macOS/Linux 可使用权重和自行构建的内核，当前预编译对战包仅针对 Windows x64。
+
 ## 构建和安装
 
 要求 C++20、CMake >= 3.20，原生测试无需 Python。

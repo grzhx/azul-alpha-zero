@@ -62,6 +62,30 @@ See [Release Changes](docs/RELEASE_2300.md) for the complete boundary and eviden
 Weights, replay buffers, full local logs, and binaries are not distributed in Git.
 Training from source is supported; the smoke example does not reproduce this strength.
 
+## Download Generation 2300 and Play Locally
+
+The [generation-2300 release](https://github.com/grzhx/azul-alpha-zero/releases/tag/v2300)
+distributes weights and an optional standalone player separately from algorithm source:
+
+- [Inference weights](https://github.com/grzhx/azul-alpha-zero/releases/download/v2300/azul-generation-2300.pt)
+  (about 4.15 MB; platform-independent PyTorch actor).
+- [Windows x64 local-play ZIP](https://github.com/grzhx/azul-alpha-zero/releases/download/v2300/azul-2300-local-play-windows-x64.zip)
+  (about 3.99 MB; includes the model, native DLL, and a separate local UI).
+- [Model metadata](https://github.com/grzhx/azul-alpha-zero/releases/download/v2300/azul-generation-2300.json)
+  and [SHA256 checksums](https://github.com/grzhx/azul-alpha-zero/releases/download/v2300/SHA256SUMS.txt).
+
+For local human-versus-AI play, install **64-bit Python 3.11+**, extract the ZIP,
+and run **Start-Windows.cmd**. First launch downloads CPU PyTorch and NumPy to
+the package's `.venv`. Open **http://127.0.0.1:8765/**, select generation 2,300
+and human-versus-AI mode, then start a game. CPU works without an NVIDIA GPU;
+start with 128 or 512 simulations. The package README explains optional CUDA
+installation and the Microsoft runtime if needed. The initial UI is in Chinese.
+
+The main branch remains algorithm-only; the separate release ZIP includes its
+own local UI. Weights contain no optimizer or replay and cannot restore the exact
+historical generation-2,300 training state. macOS/Linux users can use the weights
+with the source-built engine; the supplied precompiled player targets Windows x64.
+
 ## Build
 
 Requirements: a C++20 compiler and CMake >= 3.20. Native tests do not require Python.
