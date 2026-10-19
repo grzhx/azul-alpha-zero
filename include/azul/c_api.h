@@ -35,6 +35,8 @@ AZUL_API int azul3_batch_import_public(Azul3Batch* batch, size_t index,
 typedef struct Azul3Search Azul3Search;
 typedef struct Azul3SearchStats { uint64_t simulations, evaluations, chance_draws, chance_reuses, chance_duplicates, nodes; } Azul3SearchStats;
 AZUL_API int azul3_search_abi_version(void);
+/* Poll only between request/submit calls; counts actual completed simulations. */
+AZUL_API uint64_t azul3_search_progress(const Azul3Search* search);
 AZUL_API Azul3Search* azul3_search_create(size_t n, unsigned threads, const struct AzulSearchConfig* config);
 AZUL_API void azul3_search_destroy(Azul3Search* search);
 AZUL_API int azul3_search_begin(Azul3Search* search, const Azul3Batch* batch, uint64_t seed);
@@ -43,6 +45,7 @@ AZUL_API int azul3_search_request(Azul3Search* search, float* observations, uint
    observation's rotated player order: current player, next player, third player. */
 AZUL_API int azul3_search_submit(Azul3Search* search, const float* logits, const float* values);
 AZUL_API int azul3_search_results(Azul3Search* search, float* policies, uint16_t* actions, float* values, Azul3SearchStats* stats);
+AZUL_API int azul3_search_partial_results(Azul3Search* search, float* policies, uint16_t* actions, float* values, Azul3SearchStats* stats);
 enum { AZUL_ACTION_COUNT = 180, AZUL_OBSERVATION_SIZE = 172, AZUL_ABI_VERSION = 1 };
 typedef struct AzulBatch AzulBatch;
 typedef struct AzulStepResult {
@@ -54,6 +57,8 @@ typedef struct AzulStepResult {
     uint8_t invalid_action;   /* invalid action leaves the entire state unchanged */
 } AzulStepResult;
 AZUL_API int azul_abi_version(void);
+/* Revision 2: factory-canonical chance children and external root action mapping. */
+AZUL_API int azul_search_revision(void);
 /* threads=0: hardware concurrency; capped to batch size. n must be positive.
    Allocation and thread creation only here; no shared mutable game/RNG state.
    The same handle is NOT reentrant; different handles may be called concurrently. */
@@ -74,6 +79,13 @@ AZUL_API int azul_batch_step(AzulBatch* batch, const uint16_t* actions, AzulStep
 AZUL_API size_t azul_snapshot_size(void);
 AZUL_API int azul_batch_snapshot(AzulBatch* batch, size_t index, void* buffer, size_t bytes);
 AZUL_API int azul_batch_restore(AzulBatch* batch, size_t index, const void* buffer, size_t bytes);
+/* Fork draft snapshots into independent RNG streams, apply candidate actions,
+   observe successors BEFORE any chance deal, then deal normally for continuations.
+   snapshots[count][snapshot_size], seeds/actions[count], successor arrays[count].
+   Validates all inputs before mutating; unused lanes remain unchanged. */
+AZUL_API int azul_batch_branch(AzulBatch* batch, size_t count, const void* snapshots,
+    size_t snapshot_size, const uint64_t* seeds, const uint16_t* actions,
+    float* successors, uint8_t* perspectives, AzulStepResult* results);
 /* Full Gumbel search ABI 1. Calls on each handle must be sequential.
    begin copies the environment states; search NEVER advances the actual games.
    request writes one leaf per root into observations[n][172], ready[n] (0/1).
@@ -88,12 +100,22 @@ typedef struct AzulSearchStats {
     uint64_t simulations, evaluations, chance_draws, chance_reuses, chance_duplicates, nodes;
 } AzulSearchStats;
 AZUL_API int azul_search_abi_version(void);
+AZUL_API uint64_t azul_search_progress(const AzulSearch* search);
 AZUL_API AzulSearch* azul_search_create(size_t n, unsigned threads, const AzulSearchConfig* config);
 AZUL_API void azul_search_destroy(AzulSearch* search);
 AZUL_API int azul_search_begin(AzulSearch* search, const AzulBatch* batch, uint64_t seed);
 AZUL_API int azul_search_request(AzulSearch* search, float* observations, uint8_t* ready);
 AZUL_API int azul_search_submit(AzulSearch* search, const float* logits, const float* values);
 AZUL_API int azul_search_results(AzulSearch* search, float* policies, uint16_t* actions, float* values, AzulSearchStats* stats);
+AZUL_API int azul_search_partial_results(AzulSearch* search, float* policies, uint16_t* actions, float* values, AzulSearchStats* stats);
+/* Ranked-only single-tree anytime session APIs; existing search entry points
+ * retain their fixed-budget behavior. Diagnostics: reused nodes, total nodes. */
+AZUL_API int azul_ranked_continue(AzulSearch* search, int simulations);
+AZUL_API int azul_ranked_begin(AzulSearch* search, const AzulBatch* batch, uint64_t seed, uint64_t version);
+AZUL_API int azul3_ranked_continue(Azul3Search* search, int simulations);
+AZUL_API int azul3_ranked_begin(Azul3Search* search, const Azul3Batch* batch, uint64_t seed, uint64_t version);
+AZUL_API int azul_ranked_tree_info(const AzulSearch* search, uint64_t* out);
+AZUL_API int azul3_ranked_tree_info(const Azul3Search* search, uint64_t* out);
 typedef struct AzulSearchTuning {
     int32_t q_mode, subtree_reuse, cache_capacity, symmetric_cache;
     float q_floor, chance_coefficient, chance_exponent, chance_sensitivity, afterstate_prior;
@@ -105,6 +127,8 @@ AZUL_API int azul_search_begin_range(AzulSearch* search, const AzulBatch* batch,
     uint64_t seed, uint64_t model_version, const uint8_t* active);
 /* Returns counters: cache_hits, cache_misses, reused_nodes, afterstate_evaluations. */
 AZUL_API int azul_search_diagnostics(AzulSearch* search, uint64_t* counters);
+/* Drop obsolete tree arenas only at complete cohort boundaries. */
+AZUL_API int azul_search_release_arenas(AzulSearch* search);
 /* Explicit pre-deal observations for afterstate auxiliary learning. */
 AZUL_API int azul_batch_step_afterstates(AzulBatch* batch, const uint16_t* actions, AzulStepResult* results,
     float* afterstates, uint8_t* flags, uint8_t* perspectives);

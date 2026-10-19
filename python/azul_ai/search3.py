@@ -1,9 +1,11 @@
 from dataclasses import dataclass,asdict
 import ctypes as C, numpy as np, torch
+import time
 from azul3 import Batch3,OBSERVATION_SIZE,ACTION_COUNT
+from .search_defaults import CHANCE_CAP
 @dataclass
 class SearchConfig3:
-    simulations:int=128; candidates:int=32; max_depth:int=128; chance_initial:int=4; chance_cap:int=128; gumbel_scale:float=1.; value_scale:float=.1; maxvisit_init:float=50.
+    simulations:int=128; candidates:int=32; max_depth:int=128; chance_initial:int=4; chance_cap:int=CHANCE_CAP; gumbel_scale:float=1.; value_scale:float=.1; maxvisit_init:float=50.
 class NativeConfig(C.Structure):
     _fields_=[(n,C.c_int32) for n in ("simulations","candidates","max_depth","chance_initial","chance_cap")]+[(n,C.c_float) for n in ("gumbel_scale","value_scale","maxvisit_init")]
 class Stats(C.Structure):_fields_=[(n,C.c_uint64) for n in ("simulations","evaluations","chance_draws","chance_reuses","chance_duplicates","nodes")]
@@ -34,13 +36,23 @@ class Search3:
         self.native=NativeConfig(**asdict(self.config));self.handle=self.lib.azul3_search_create(self.n,threads,C.byref(self.native));
         if not self.handle:raise RuntimeError("invalid 3P search config")
         self.ready=np.zeros(self.n,np.uint8);self.policies=np.zeros((self.n,ACTION_COUNT),np.float32);self.actions=np.zeros(self.n,np.uint16);self.values=np.zeros(self.n,np.float32);self.stats=Stats()
-    def run(self,evaluator,seed,cancel=None):
+    def run(self,evaluator,seed,cancel=None,progress=None,deadline=None):
+        self.deadline_reached=False
         if self.lib.azul3_search_begin(self.handle,self.batch._handle,seed)<0:raise RuntimeError("3P search begin failed")
         for _ in range(self.config.simulations+3):
             if cancel is not None and cancel.is_set():return None
             count=self.lib.azul3_search_request(self.handle,ptr(evaluator.observations),ptr(self.ready,C.c_uint8))
             if count<0:raise RuntimeError("3P search request failed")
+            if progress is not None:progress()
             if count==0:break
+            if deadline is not None and time.monotonic()>=deadline:
+                partial=getattr(self.lib,'azul3_search_partial_results',None)
+                if partial is None:raise RuntimeError('Timed 3P search library is outdated')
+                partial.argtypes=[C.c_void_p,C.POINTER(C.c_float),C.POINTER(C.c_uint16),C.POINTER(C.c_float),C.POINTER(Stats)]
+                partial.restype=C.c_int
+                if partial(self.handle,ptr(self.policies),ptr(self.actions,C.c_uint16),ptr(self.values),C.byref(self.stats))==0:
+                    self.deadline_reached=True
+                    return self.actions,self.policies,self.values
             p,v=evaluator.evaluate()
             if self.lib.azul3_search_submit(self.handle,ptr(p),ptr(v))<0:raise RuntimeError("3P search submit failed")
         else:raise RuntimeError("3P search budget exceeded")

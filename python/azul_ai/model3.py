@@ -18,8 +18,8 @@ class PolicyValue3(nn.Module):
         return pol,torch.tanh(self.value(h))
     @staticmethod
     def from_1800(path,device="cpu"):
-        from .model import PolicyValue
-        ck=torch.load(path,map_location="cpu",weights_only=False); old=PolicyValue(**ck["architecture"]);old.load_state_dict(ck["model"])
+        from .model import policy_value_from_architecture
+        ck=torch.load(path,map_location="cpu",weights_only=False); old=policy_value_from_architecture(ck["architecture"]);old.load_state_dict(ck["model"])
         m=PolicyValue3(width=ck["architecture"]["width"],blocks=ck["architecture"]["blocks"])
         sd=m.state_dict(); osd=old.state_dict()
         for k in sd:

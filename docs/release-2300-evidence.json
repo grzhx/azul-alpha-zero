@@ -1,0 +1,158 @@
+{
+  "release_baseline": 2300,
+  "actor_sha256": "564b4034879d9d62d159ee8acb2097095fdc3e7fde7941577b776a20e914fc2e",
+  "architecture": {
+    "width": 256,
+    "blocks": 4,
+    "kind": "equivariant",
+    "end_features": true,
+    "value_tower": true,
+    "value_tower_blocks": 2
+  },
+  "parameters": 1031427,
+  "phase_2201_2300": {
+    "games": 332484,
+    "decision_positions": 13118656,
+    "updates": 25623,
+    "truncated": 0,
+    "simulations": 2048,
+    "chance_cap": 256,
+    "envs": 2048,
+    "learning_rate": 5e-05,
+    "history": [
+      1800,
+      1900,
+      2002,
+      2100
+    ],
+    "history_weights": [
+      1,
+      2,
+      3,
+      4
+    ],
+    "history_fraction": 0.4
+  },
+  "generation_2300_evaluations": [
+    {
+      "opponent_generation": 2200,
+      "simulations": [
+        1024,
+        1024
+      ],
+      "games": 1000,
+      "wins": 541,
+      "draws": 13,
+      "losses": 446,
+      "score_rate": 0.5475,
+      "ci95": [
+        0.5165,
+        0.5785
+      ],
+      "seed": 23001220,
+      "truncated": 0
+    },
+    {
+      "opponent_generation": 2100,
+      "simulations": [
+        1024,
+        1024
+      ],
+      "games": 1000,
+      "wins": 516,
+      "draws": 18,
+      "losses": 466,
+      "score_rate": 0.525,
+      "ci95": [
+        0.4945,
+        0.556
+      ],
+      "seed": 23001210,
+      "truncated": 0
+    },
+    {
+      "opponent_generation": 2200,
+      "simulations": [
+        2048,
+        2048
+      ],
+      "games": 1000,
+      "wins": 519,
+      "draws": 17,
+      "losses": 464,
+      "score_rate": 0.5275,
+      "ci95": [
+        0.4965,
+        0.5585
+      ],
+      "seed": 23002220,
+      "truncated": 0
+    },
+    {
+      "opponent_generation": 2200,
+      "simulations": [
+        4096,
+        4096
+      ],
+      "games": 1000,
+      "wins": 533,
+      "draws": 11,
+      "losses": 456,
+      "score_rate": 0.5385,
+      "ci95": [
+        0.5075,
+        0.5695
+      ],
+      "seed": 23004220,
+      "truncated": 0
+    }
+  ],
+  "generation_2400_vs_2300": [
+    {
+      "simulations": 1024,
+      "games": 1000,
+      "wins": 509,
+      "draws": 16,
+      "losses": 475,
+      "score_rate": 0.517,
+      "ci95": [
+        0.4875,
+        0.547
+      ]
+    },
+    {
+      "simulations": 2048,
+      "games": 1000,
+      "wins": 465,
+      "draws": 21,
+      "losses": 514,
+      "score_rate": 0.4755,
+      "ci95": [
+        0.447,
+        0.5045
+      ]
+    },
+    {
+      "simulations": 4096,
+      "games": 1000,
+      "wins": 481,
+      "draws": 13,
+      "losses": 506,
+      "score_rate": 0.4875,
+      "ci95": [
+        0.4575,
+        0.5185
+      ]
+    }
+  ],
+  "source_checkpoint_code_hashes": {
+    "python/azul_ai/optimized_train.py": "e519a34598db7e0b177c913ce1f73a4ff93bc406bf2cfa519fd124dfabba4aa8",
+    "python/azul_ai/optimized_selfplay.py": "520f37477d5e54143dad9d3c2f4b2ba1e4459d2899c1178e58dfd7de69fe2e8c",
+    "python/azul_ai/optimized_learning.py": "4925e65ff5d4494d6c44eaa5ffa4ebee9ae28b672f912ab2d76158d8fd9bbfa6",
+    "python/azul_ai/optimized_search.py": "c487a43c5802c8d9dc6a1646adf97c1c07801d26e528aec07fff9b4e33db67b2",
+    "include/azul/search.hpp": "ba8ffea059e4846431c0ccc789e85213516a7bb8a0bbbcdbcdcd9b404741eb9e",
+    "src/c_api.cpp": "e8a879db9cc89a7dda0870050f10afa309d03974f4a750d2665e0e116b5afeed",
+    "scripts/train_standard_2048.py": "1989c104159208c0513f353fd23da9d152a91772091b48e7f0d8f7722d9aa678"
+  },
+  "note": "Historical source hashes record provenance; this is a curated algorithm-only reconstruction, not an exact historical checkout. No new training or strength evaluation was performed."
+}

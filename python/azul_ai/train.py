@@ -12,6 +12,7 @@ from azul import Batch
 from . import ENGINE_VERSION
 from .model import PolicyValue, permute_factories, loss_for_batch
 from .search import Search, SearchConfig, Evaluator
+from .search_defaults import CHANCE_CAP
 from .selfplay import collect, split_seed
 
 
@@ -84,7 +85,7 @@ def parser():
     p.add_argument("--cpu-threads", type=int, default=2)
     p.add_argument("--simulations", type=int, default=128)
     p.add_argument("--candidates", type=int, default=16)
-    p.add_argument("--chance-cap", type=int, default=64)
+    p.add_argument("--chance-cap", type=int, default=CHANCE_CAP)
     p.add_argument("--max-depth", type=int, default=96)
     p.add_argument("--max-steps", type=int, default=4096)
     p.add_argument("--width", type=int, default=256)

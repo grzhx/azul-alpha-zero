@@ -3,6 +3,7 @@
 // are implemented here for the native Azul search interface.
 // Chance-node integration and the Azul arena/request protocol are project code.
 #include "engine3.hpp"
+#include "factory_symmetry.hpp"
 #include <cmath>
 #include <limits>
 #include <stdexcept>
@@ -10,9 +11,19 @@
 #include <cstring>
 
 namespace azul3 {
+#ifdef AZUL_RANKED_ANYTIME_DLL
+using VisitCount = std::uint64_t;
+using ValueSum = double;
+#else
+using VisitCount = unsigned;
+using ValueSum = float;
+#endif
+#ifndef AZUL_SEARCH_MAX_SIMULATIONS
+#define AZUL_SEARCH_MAX_SIMULATIONS 4096
+#endif
 struct SearchConfig {
     int simulations = 128, candidates = 16, max_depth = 96;
-    int chance_initial = 2, chance_cap = 64;
+    int chance_initial = 2, chance_cap = 256;
     float gumbel_scale = 1.0F, value_scale = 0.1F, maxvisit_init = 50.0F;
 };
 struct SearchTuning {
@@ -22,7 +33,7 @@ struct SearchTuning {
     bool subtree_reuse = false;
 };
 inline bool valid_config(const SearchConfig& c) noexcept {
-    return c.simulations >= 2 && c.simulations <= 4096 && c.candidates >= 1 &&
+    return c.simulations >= 2 && c.simulations <= AZUL_SEARCH_MAX_SIMULATIONS && c.candidates >= 1 &&
         c.candidates <= action_count && c.candidates <= c.simulations &&
         c.max_depth >= 1 && c.max_depth <= 512 && c.chance_initial >= 1 &&
         c.chance_cap >= c.chance_initial && c.chance_cap <= 256 &&
@@ -74,19 +85,21 @@ inline std::uint64_t public_hash(const State& s) noexcept {
 struct ChanceEdge { int child=-1; unsigned multiplicity=0; };
 struct SearchEdge {
     int child = -1;
-    unsigned visits = 0;
-    std::array<float,3> sum{}; float logit = 0, prior = 0;
+    VisitCount visits = 0;
+    std::array<ValueSum,3> sum{}; float logit = 0, prior = 0;
     Action action = 0;
 };
 struct SearchNode {
     State state;
     std::size_t first = 0;
     int count = 0, capacity = 0;
-    unsigned visits = 0, samples = 0;
-    std::array<float,3> sum{}, raw{};
+    VisitCount visits = 0;
+    unsigned samples = 0;
+    std::array<ValueSum,3> sum{};
+    std::array<float,3> raw{};
     bool expanded = false;
     std::uint64_t sample_key = 0;
-    std::array<float,3> mean() const noexcept { std::array<float,3> out{}; for(int p=0;p<3;++p) out[p]=visits?sum[p]/float(visits):raw[p]; return out; }
+    std::array<float,3> mean() const noexcept { std::array<float,3> out{}; for(int p=0;p<3;++p) out[p]=visits?float(sum[p]/ValueSum(visits)):raw[p]; return out; }
 };
 struct SearchStats {
     std::uint64_t simulations = 0, evaluations = 0, chance_draws = 0;
@@ -107,17 +120,19 @@ public:
 
     explicit SearchTree3(SearchConfig c = {}) : config(c) {
         if (!valid_config(c)) throw std::invalid_argument("invalid search config");
-        nodes.reserve(std::size_t(c.simulations)*2+1);
-        edges.reserve(std::size_t(c.simulations)*48);
+        const auto initial_budget = std::size_t(std::min(c.simulations, 4096));
+        nodes.reserve(initial_budget*2+1);
+        edges.reserve(initial_budget*48);
         path_nodes.reserve(c.max_depth*2+2); path_edges.reserve(c.max_depth*2+2);
     }
     void reset(State s, std::uint64_t seed) { root_player_=s.current;
+        root_factory_order_=azul_symmetry::canonicalize_factories(s);
         nodes.clear(); edges.clear(); chance_edges.clear(); path_nodes.clear(); path_edges.clear();
         stats = {}; pending = -1; completed = 0; seed_ = seed;
         disabled_=false;root_base.fill(0);
         select_rng.state = episode_seed(seed, 1);
         s.rng.state = 0; // impossible for search to peek at the real episode RNG
-        add_node(s);
+        add_node(s,true);
         root_gumbel.fill(0);
         Rng noise{episode_seed(seed, 2)};
         for (auto& x : root_gumbel)
@@ -126,13 +141,23 @@ public:
         else if (s.phase != Phase::draft) throw std::invalid_argument("root must be a decision");
     }
     void deactivate() {disabled_=true;completed=config.simulations;pending=-1;}
-    void begin(State s,std::uint64_t seed,std::uint64_t version) {
+    void begin(State s,std::uint64_t seed,std::uint64_t version,bool public_match=false) {
         s.rng.state=0;
+        const auto order=azul_symmetry::canonicalize_factories(s);
         int found=-1;
         if(tuning.subtree_reuse && version==version_ && !disabled_ && s.phase==Phase::draft) {
-            for(int i=0;i<int(nodes.size());++i) if(nodes[i].state==s && nodes[i].expanded) {found=i;break;}
+            if(public_match) {
+                for(int i=0;i<int(nodes.size());++i) {
+                    auto candidate=nodes[i].state;candidate.ply=s.ply;
+                    if(candidate==s && nodes[i].expanded) {found=i;break;}
+                }
+            } else {
+                for(int i=0;i<int(nodes.size());++i) if(nodes[i].state==s && nodes[i].expanded) {found=i;break;}
+            }
         }
-        if(found<0) {reset(s,seed);version_=version;return;}
+        if(found<0) {reset(s,seed);root_factory_order_=order;version_=version;return;}
+        root_factory_order_=order;
+        root_player_=s.current;
         scratch_nodes.clear();scratch_edges.clear();scratch_chance.clear();
         remap.assign(nodes.size(),-1);old_ids.clear();old_ids.push_back(found);remap[found]=0;
         scratch_nodes.push_back(nodes[found]);
@@ -159,6 +184,14 @@ public:
         ensure_schedule();
     }
     bool done() const noexcept { return !nodes.empty() && completed == config.simulations; }
+    void continue_epoch(int simulations) {
+        if (!done() || disabled_ || simulations < config.candidates || simulations < 2 || simulations > AZUL_SEARCH_MAX_SIMULATIONS)
+            throw std::logic_error("invalid search continuation");
+        if (nodes[0].state.phase != Phase::draft) throw std::logic_error("non-decision continuation");
+        config.simulations=simulations;completed=0;pending=-1;
+        for(int i=0;i<nodes[0].count;++i) root_base[i]=edges[nodes[0].first+i].visits;
+        path_nodes.clear();path_edges.clear();ensure_schedule();
+    }
     // Advances until one network request or completion. Repeated request is idempotent.
     bool request(float* observation) {
         if (pending >= 0) { observe(nodes[pending].state,nodes[pending].state.current,observation); return true; }
@@ -214,8 +247,9 @@ public:
         node.raw=absolute;node.expanded=true;pending=-1;++stats.evaluations;
         if(index==0){ensure_schedule();path_nodes.clear();path_edges.clear();} else backup(node.raw);
     }
-    void result(float* policy, Action& action, float& root_value) const {
-        if (!done()) throw std::logic_error("search unfinished");
+    void result(float* policy, Action& action, float& root_value, bool partial=false) const {
+        if (!done() && !(partial && !nodes.empty() && nodes[0].expanded && completed>0))
+            throw std::logic_error("search unfinished");
         std::fill_n(policy, action_count, 0.0F);
         if(disabled_) {action=65535;root_value=0;return;}
         if (nodes[0].state.phase == Phase::terminal) {
@@ -223,29 +257,32 @@ public:
         }
         std::array<float,action_count> q{}, weights{};
         transformed(0,q.data()); improved(0,q.data(),weights.data());
-        const auto& root = nodes[0]; unsigned most = 0;
+        const auto& root = nodes[0]; VisitCount most = 0;
         for (int i=0;i<root.count;++i) most = std::max(most,edges[root.first+i].visits-root_base[i]);
         float best = -std::numeric_limits<float>::infinity(); action = 65535;
         for (int i=0;i<root.count;++i) {
-            const auto& e = edges[root.first+i]; policy[e.action] = weights[i];
+            const auto& e = edges[root.first+i];
+            const auto external=azul_symmetry::external_action(e.action,root_factory_order_);
+            policy[external] = weights[i];
             const float score = e.logit + root_gumbel[e.action] + q[i];
-            if (e.visits-root_base[i] == most && score > best) { best=score; action=e.action; }
+            if (e.visits-root_base[i] == most && score > best) { best=score; action=external; }
         }
         root_value = root.mean()[root_player_];
     }
     // Exposed for equation-level tests and search diagnostics. Max-N uses the actor-to-move component.
     void transformed(int index, float* out) const {
-        const auto& n=nodes[index]; const int player=n.state.current; unsigned total=0,most=0; double p_sum=0,weighted=0;
+        const auto& n=nodes[index]; const int player=n.state.current; VisitCount total=0,most=0; double p_sum=0,weighted=0;
         for(int i=0;i<n.count;++i){const auto&e=edges[n.first+i];total+=e.visits;most=std::max(most,e.visits-(index==0?root_base[i]:0));if(e.visits){p_sum+=e.prior;weighted+=double(e.prior)*edge_value(e,player);}}
         const float mixed=float((n.raw[player]+total*(p_sum?weighted/p_sum:0))/(total+1.0));float low=1e30F,high=-1e30F;
         for(int i=0;i<n.count;++i){const auto&e=edges[n.first+i];out[i]=e.visits?edge_value(e,player):mixed;low=std::min(low,out[i]);high=std::max(high,out[i]);}
         const float denominator=tuning.q_mode==2?2.0F:std::max(high-low,tuning.q_mode==1?tuning.q_floor:1e-8F);const float scale=(config.maxvisit_init+float(most))*config.value_scale/denominator;for(int i=0;i<n.count;++i)out[i]=(out[i]-low)*scale;
     }
 private:
+    std::array<std::uint8_t,factories> root_factory_order_{};
     std::uint8_t root_player_=0;
     bool disabled_=false;
     std::uint64_t version_=0;
-    std::array<unsigned,action_count> root_base{};
+    std::array<VisitCount,action_count> root_base{};
     std::vector<SearchNode> scratch_nodes;
     std::vector<SearchEdge> scratch_edges;
     std::vector<ChanceEdge> scratch_chance;
@@ -263,7 +300,8 @@ private:
     std::array<float,action_count> root_gumbel{};
     std::vector<int> schedule, path_nodes;
     std::vector<std::size_t> path_edges;
-    int add_node(const State& s) {
+    int add_node(State s,bool canonical=false) {
+        if(!canonical) azul_symmetry::canonicalize_factories(s);
         SearchNode n; n.state=s; n.state.rng.state=0;
         if (s.phase == Phase::chance) {
             n.first=chance_edges.size();n.capacity=std::min(config.chance_cap,4);
@@ -274,7 +312,7 @@ private:
     }
     float edge_value(const SearchEdge& e,int player) const noexcept {
         if (e.child>=0 && nodes[e.child].state.phase==Phase::chance) return nodes[e.child].mean()[player];
-        return e.visits?e.sum[player]/float(e.visits):0.0F;
+        return e.visits?float(e.sum[player]/ValueSum(e.visits)):0.0F;
     }
     static void terminal_utility(const State& s,std::array<float,3>& out) noexcept {
         std::array<int,3> rank{}; for(int i=0;i<3;++i){int greater=0,equal=0;for(int j=0;j<3;++j){greater+=s.players[j].score>s.players[i].score;equal+=s.players[j].score==s.players[i].score;}rank[i]=greater*2+(equal-1);}
@@ -290,7 +328,7 @@ private:
         const auto& n=nodes[index]; std::array<float,action_count> q{},weights{};
         transformed(index,q.data());
         if(index) improved(index,q.data(),weights.data());
-        unsigned total=0;
+        VisitCount total=0;
         for(int i=0;i<n.count;++i) total+=edges[n.first+i].visits;
         float best=-std::numeric_limits<float>::infinity(); std::size_t chosen=n.first;
         for(int i=0;i<n.count;++i) {
@@ -318,6 +356,7 @@ private:
             State next=nodes[index].state;
             next.rng.state=episode_seed(nodes[index].sample_key,nodes[index].samples);
             deal(next); next.rng.state=0;
+            azul_symmetry::canonicalize_factories(next);
             ++nodes[index].samples; ++stats.chance_draws;
             for(int i=0;i<nodes[index].count;++i) if(nodes[chance_edges[first+i].child].state==next) {
                 ++chance_edges[first+i].multiplicity; ++stats.chance_duplicates; return first+i;
@@ -329,7 +368,7 @@ private:
                 nodes[index].first=first=new_first;nodes[index].capacity=capacity;
             }
             const auto edge=first+nodes[index].count++;
-            chance_edges[edge].child=add_node(next); chance_edges[edge].multiplicity=1; return edge;
+            chance_edges[edge].child=add_node(next,true); chance_edges[edge].multiplicity=1; return edge;
         }
         ++stats.chance_reuses;
         unsigned draw=select_rng.bounded(nodes[index].samples);

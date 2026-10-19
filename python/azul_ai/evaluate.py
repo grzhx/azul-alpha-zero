@@ -7,7 +7,7 @@ import numpy as np
 import torch
 from azul import Batch
 from . import ENGINE_VERSION, OPTIMIZED_VERSION
-from .model import PolicyValue
+from .model import PolicyValue, policy_value_from_architecture
 from .search import Search, SearchConfig, Evaluator
 from .selfplay import results_view, split_seed
 from .train import device_setup
@@ -17,7 +17,7 @@ def load_actor(path, device):
     checkpoint = torch.load(path, map_location="cpu", weights_only=False)
     if checkpoint["engine_version"] not in (ENGINE_VERSION, OPTIMIZED_VERSION):
         raise ValueError("Engine version mismatch")
-    model = PolicyValue(**checkpoint["architecture"]).to(device)
+    model = policy_value_from_architecture(checkpoint["architecture"]).to(device)
     model.load_state_dict(checkpoint["model"])
     model.eval()
     return model

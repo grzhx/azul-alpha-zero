@@ -4,6 +4,10 @@ The primary entry point is `scripts/train_optimized.py`. See the consolidated
 [Training and Evaluation](TRAINING.md) guide for setup, commands, exact resume,
 retuning, and checkpoint retention.
 
+Optional [ending features](ENDING_FEATURES.md) add explicit two-player ending
+conditions to the existing policy/WDL network with `--end-features`. Old runs
+enable them with `--retune`; replay and optimizer state survive the migration.
+
 ## Implementation Map
 
 | Module | Responsibility |
@@ -46,3 +50,8 @@ Benchmarks require CUDA; generated `reports/` files are ignored by Git. The lear
 benchmark uses synthetic data only for throughput and does not train a game model.
 Compare measured speed separately from fixed-budget search quality and playing
 strength per wall-clock time.
+
+## Selected Release
+
+See [Generation 2300](RELEASE_2300.md) for ending features, value calibration,
+arena reclamation, historical configuration and the excluded later experiments.

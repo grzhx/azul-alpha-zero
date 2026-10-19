@@ -1,0 +1,12 @@
+{
+  "historical_dll_sha256": "576e778042a9bff3745df777884c858f2489a79404d570c5c1eaf5dad563a102",
+  "release_dll_sha256": "e6c30ccfef04fc3c24672e17bb9784131a904a562bfd5ebc291e395fdbeaf330",
+  "root_batches": 100,
+  "roots_per_batch": 8,
+  "active_decisions": 539,
+  "chance_draws": 2555,
+  "chance_reuses": 4484,
+  "model_2300_parameters": 1031427,
+  "optimized_model_root_batches": 12,
+  "comparison": "Matching actions, policies, values and native counters against the recorded 2300 DLL; not a strength evaluation."
+}

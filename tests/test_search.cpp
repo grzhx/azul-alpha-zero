@@ -1,6 +1,7 @@
 #include "azul/search.hpp"
 #include "azul/c_api.h"
 #include "azul/evaluation_cache.hpp"
+#include "azul/search3.hpp"
 #include <iostream>
 #include <cstdlib>
 #include <numeric>
@@ -101,7 +102,8 @@ int main() {
     SearchTree duplicates(cfg);duplicates.reset(monochrome,42);complete(duplicates);
     CHECK(duplicates.stats.chance_duplicates>0 && duplicates.stats.chance_reuses>0);
     // Analytic chance expectation: only two colors, choose four out of five.
-    // Each factory-0 color-0 indicator has mean E[count]/4 = (4*2/5)/4 = 0.4.
+    // Factories are unlabeled: with two blue among five tiles split 4+1,
+    // E[max factory blue count]/4 = (0.4*1 + 0.6*2)/4 = 0.4.
     double expected_sum=0;
     for(unsigned seed=0;seed<1000;++seed) {
         State toy;toy.sources[5][4]=1;toy.tiles_remaining=1;
@@ -110,7 +112,11 @@ int main() {
         azul::SearchConfig small;small.simulations=16;small.candidates=1;small.max_depth=1;small.chance_cap=8;
         SearchTree exact(small);exact.reset(toy,seed);
         std::array<float,172> o{};std::array<float,180> l{};
-        while(exact.request(o.data())) exact.submit(l.data(),o[0]*5.0F);
+        while(exact.request(o.data())) {
+            float maximum=0;
+            for(int factory=0;factory<5;++factory) maximum=std::max(maximum,o[factory*5]);
+            exact.submit(l.data(),maximum*5.0F);
+        }
         std::array<float,180> policy{};azul::Action act;float v;
         exact.result(policy.data(),act,v);
         CHECK(act==azul::encode(5,4,5));
@@ -159,5 +165,100 @@ int main() {
             CHECK(std::abs(node.mean0()-expected/(node.samples+0.5))<1e-5);
         }
     }
-    std::cout<<"Gumbel search tests passed: schedule, forced wins, perspectives, RNG isolation, chance reuse/weights/duplicates\n";
+    // Equivalent factory order has the same tree/prior/noise; only external
+    // action slots move. Center remains fixed, including repeated factories.
+    {
+        auto original=azul::initial_state(711);auto permuted=original;
+        std::swap(permuted.sources[0],permuted.sources[4]);
+        SearchTree x(cfg),y(cfg);x.reset(original,42);y.reset(permuted,42);
+        complete(x);complete(y);
+        CHECK(x.nodes[0].state==y.nodes[0].state);
+        x.result(pa.data(),aa,va);y.result(pb.data(),ab,vb);
+        for(int i=0;i<30;++i) CHECK(pa[i]==pb[120+i] && pa[120+i]==pb[i]);
+        for(int i=30;i<120;++i) CHECK(pa[i]==pb[i]);
+        for(int i=150;i<180;++i) CHECK(pa[i]==pb[i]);
+        CHECK(azul::legal(original,aa) && azul::legal(permuted,ab));
+    }
+    // Re-root a sampled deal under a different REAL factory ordering. Both
+    // child lookup and policy/action projection must survive the permutation.
+    {
+        SearchTree reuse(cfg);reuse.tuning.subtree_reuse=true;
+        reuse.begin(cross,14,1);complete(reuse);
+        State actual;bool found=false;
+        for(const auto& n:reuse.nodes) if(n.expanded && n.state.phase==azul::Phase::draft && n.state.round>cross.round) {
+            actual=n.state;found=true;break;
+        }
+        CHECK(found);
+        std::swap(actual.sources[0],actual.sources[4]);actual.rng.state=999;
+        reuse.begin(actual,15,1);CHECK(reuse.stats.reused_nodes>0);complete(reuse);
+        reuse.result(pa.data(),aa,va);CHECK(azul::legal(actual,aa));
+        for(int i=0;i<180;++i) if(!azul::legal(actual,azul::Action(i))) CHECK(pa[i]==0);
+    }
+    // Draw FIRST, then canonicalize. Original ordered deals with the one yellow
+    // in any of five factories must share exactly one child, accumulating mass.
+    {
+        State toy;toy.sources[5][4]=1;toy.tiles_remaining=1;
+        toy.players[0].wall=azul::color_mask(4);
+        toy.bag={19,1,0,0,0};toy.bag_size=20;toy.phase=azul::Phase::draft;
+        azul::SearchConfig fixed;fixed.simulations=16;fixed.candidates=1;fixed.max_depth=1;
+        fixed.chance_initial=8;fixed.chance_cap=8;
+        SearchTree dedup(fixed);dedup.reset(toy,29);complete(dedup);
+        const auto& chance=dedup.nodes[1];CHECK(chance.samples==8 && chance.count==1);
+        CHECK(dedup.chance_edges[chance.first].multiplicity==8);
+        CHECK(dedup.stats.chance_duplicates==7);
+        auto canonical=dedup.nodes[dedup.chance_edges[chance.first].child].state;
+        std::array<int,5> yellow_positions{};
+        for(unsigned sample=0;sample<8;++sample) {
+            auto draw=chance.state;draw.rng.state=azul::episode_seed(chance.sample_key,sample);
+            azul::deal(draw);draw.rng.state=0;
+            for(int f=0;f<5;++f) if(draw.sources[f][1]) ++yellow_positions[f];
+            azul_symmetry::canonicalize_factories(draw);CHECK(draw==canonical);
+        }
+        CHECK(std::count_if(yellow_positions.begin(),yellow_positions.end(),[](int n){return n>0;})>1);
+    }
+    // Find a three-sample X,X,Y pool and check the 2:1 expectation explicitly.
+    {
+        bool verified=false;
+        for(unsigned seed=0;seed<100 && !verified;++seed) {
+            State toy;toy.sources[5][4]=1;toy.tiles_remaining=1;
+            toy.players[0].wall=azul::color_mask(4);
+            toy.bag={18,2,0,0,0};toy.bag_size=20;toy.phase=azul::Phase::draft;
+            azul::SearchConfig fixed;fixed.simulations=3;fixed.candidates=1;fixed.max_depth=1;
+            fixed.chance_initial=3;fixed.chance_cap=3;
+            SearchTree weighted(fixed);weighted.reset(toy,seed);
+            std::array<float,172> o{};std::array<float,180> l{};
+            while(weighted.request(o.data())) {
+                float maximum=0;for(int f=0;f<5;++f) maximum=std::max(maximum,o[f*5+1]);
+                weighted.submit(l.data(),maximum*10.0F);
+            }
+            const auto& chance=weighted.nodes[1];
+            if(chance.count!=2) continue;
+            unsigned mass=0;double expectation=0,uniform=0;
+            for(int i=0;i<2;++i) {auto e=weighted.chance_edges[chance.first+i];
+                mass+=e.multiplicity;expectation+=e.multiplicity*weighted.nodes[e.child].mean0();
+                uniform+=weighted.nodes[e.child].mean0();}
+            CHECK(mass==3);CHECK(std::abs(chance.mean0()-expectation/3)<1e-5);
+            CHECK(std::abs(chance.mean0()-uniform/2)>0.01);verified=true;
+        }
+        CHECK(verified);
+    }
+    // Max-N uses the same symmetry while keeping three absolute utilities.
+    {
+        azul3::SearchConfig config;config.simulations=16;config.gumbel_scale=0;
+        auto original=azul3::initial_state(98);auto permuted=original;
+        std::swap(permuted.sources[0],permuted.sources[6]);
+        azul3::SearchTree3 x(config),y(config);x.tuning.subtree_reuse=true;y.tuning.subtree_reuse=true;
+        x.begin(original,42,1);y.begin(permuted,42,1);
+        std::array<float,244> obs3{};std::array<float,240> logits3{},px{},py{};
+        const std::array<float,3> utility{.2F,-.1F,-.1F};
+        for(auto tree:{&x,&y}) while(tree->request(obs3.data())) tree->submit(logits3.data(),utility.data());
+        azul3::Action ax,ay;float vx,vy;x.result(px.data(),ax,vx);y.result(py.data(),ay,vy);
+        CHECK(azul3::legal(original,ax) && azul3::legal(permuted,ay));
+        for(int i=0;i<30;++i) CHECK(px[i]==py[180+i] && px[180+i]==py[i]);
+        for(int i=30;i<180;++i) CHECK(px[i]==py[i]);
+        for(int i=210;i<240;++i) CHECK(px[i]==py[i]);
+        auto real=y.nodes[0].state;std::swap(real.sources[1],real.sources[5]);
+        y.begin(real,43,1);CHECK(y.stats.reused_nodes>0);
+    }
+    std::cout<<"Gumbel search tests passed: schedule, perspectives, canonical factories, action maps, chance masses and rerooting\n";
 }

@@ -12,18 +12,21 @@ from azul_ai.search import SearchConfig
 from azul_ai.selfplay import split_seed,results_view
 from azul_ai.train import device_setup
 
-def match(candidate,opponent,budget_a,budget_b,pairs,batch_pairs,seed,output,disable_a=None):
+def match(candidate,opponent,budget_a,budget_b,pairs,batch_pairs,seed,output,disable_a=None,library=None,chance_cap=None):
+    output=Path(output)
+    output.parent.mkdir(parents=True,exist_ok=True)
     device=device_setup("cuda",2)
     actors=[FrozenActor(load_actor(p,device),device) for p in (candidate,opponent)]
     saved=[torch.load(p,map_location="cpu",weights_only=False) for p in (candidate,opponent)]
     records=[];start=time.perf_counter();totals=[0,0];search_time=[0.,0.];calibration=[]
     for offset in range(0,pairs,batch_pairs):
         count=min(batch_pairs,pairs-offset);n=count*2
-        with Batch(n,8) as env:
+        with Batch(n,8,library=library) as env:
             searches=[]
             try:
                 for j,(actor,checkpoint,budget) in enumerate(zip(actors,saved,(budget_a,budget_b))):
                     cfg=SearchConfig(**checkpoint["search"]);cfg.simulations=budget;cfg.gumbel_scale=0
+                    if chance_cap is not None:cfg.chance_cap=chance_cap
                     tuning=Tuning(**checkpoint["tuning"])
                     if j==0 and disable_a=="afterstate":tuning.afterstate_prior=0
                     if j==0 and disable_a=="reuse":tuning.subtree_reuse=0
@@ -62,7 +65,17 @@ def match(candidate,opponent,budget_a,budget_b,pairs,batch_pairs,seed,output,dis
                     if winners[i]!=-2:calibration.append((probs,1 if winners[i]==-1 else 0 if winners[i]==player else 2))
             finally:
                 for search in searches:search.close()
-        print(json.dumps(dict(event="audit_progress",games=len(records),seconds=time.perf_counter()-start)),flush=True)
+        completed=[r["score"] for r in records if r["score"] is not None]
+        partial=dict(candidate=str(candidate),opponent=str(opponent),simulations=[budget_a,budget_b],seed=seed,
+            games=len(records),wins=completed.count(1.),draws=completed.count(.5),losses=completed.count(0.),
+            truncated=len(records)-len(completed),seconds=time.perf_counter()-start,
+            provisional=True,records=records)
+        partial_path=output.with_name(output.stem+".partial.json")
+        temporary=partial_path.with_suffix(".tmp")
+        temporary.write_text(json.dumps(partial,indent=2),encoding="utf-8")
+        temporary.replace(partial_path)
+        print(json.dumps(dict(event="audit_progress",**{k:partial[k] for k in
+            ("games","wins","draws","losses","truncated","seconds")})),flush=True)
     pair_scores=np.array([(records[i]["score"]+records[i+1]["score"])/2 for i in range(0,len(records),2)
                           if records[i]["score"] is not None and records[i+1]["score"] is not None])
     outcomes=[r["score"] for r in records if r["score"] is not None]
@@ -73,7 +86,9 @@ def match(candidate,opponent,budget_a,budget_b,pairs,batch_pairs,seed,output,dis
         search_decisions=totals,search_seconds=search_time,seconds=time.perf_counter()-start,
         heldout_positions=len(label),wdl_brier=float(((probability-np.eye(3)[label])**2).sum(1).mean()),
         wdl_cross_entropy=float(-np.log(probability[np.arange(len(label)),label].clip(1e-8)).mean()),
-        candidate_config=asdict(searches[0].config),candidate_tuning=asdict(searches[0].tuning),records=records)
+        candidate_config=asdict(searches[0].config),candidate_tuning=asdict(searches[0].tuning),
+        opponent_config=asdict(searches[1].config),opponent_tuning=asdict(searches[1].tuning),
+        native_library=str(library) if library is not None else "default",records=records)
     output.parent.mkdir(parents=True,exist_ok=True);output.write_text(json.dumps(report,indent=2),encoding="utf-8")
     print(json.dumps({k:v for k,v in report.items() if k!="records"}),flush=True)
     return report
@@ -84,4 +99,6 @@ if __name__=="__main__":
     p.add_argument("--pairs",type=int,default=500);p.add_argument("--batch-pairs",type=int,default=128)
     p.add_argument("--seed",type=int,default=7301901);p.add_argument("--output",type=Path,required=True)
     p.add_argument("--disable-a",choices=["afterstate","reuse"])
-    a=p.parse_args();match(a.candidate,a.opponent,a.budget_a,a.budget_b,a.pairs,a.batch_pairs,a.seed,a.output,a.disable_a)
+    p.add_argument("--library",type=Path,help="Use an isolated native search build")
+    p.add_argument("--chance-cap",type=int,default=None,help="Explicitly match the runtime chance-pool cap")
+    a=p.parse_args();match(a.candidate,a.opponent,a.budget_a,a.budget_b,a.pairs,a.batch_pairs,a.seed,a.output,a.disable_a,a.library,a.chance_cap)

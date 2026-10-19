@@ -5,8 +5,10 @@ import numpy as np
 import torch
 from torch.nn import functional as F
 from .model import permute_factories
+from .policy_diagnostics import policy_metrics
 from .train import save_checkpoint
 from .checkpoint_storage import save_replay,load_replay,retention,checked_path
+from .action_ranking import ranking_losses
 
 
 class DeviceReplay:
@@ -85,13 +87,28 @@ class DeviceReplay:
 
 
 class GraphLearner:
-    def __init__(self,model,optimizer,replay,batch_size=1024,after_weight=0.25,graphs=True,bf16=True):
+    def __init__(self,model,optimizer,replay,batch_size=1024,after_weight=0.25,
+                 graphs=True,bf16=True,*,value_rank_weight=0.0,value_label_smoothing=0.0,
+                 policy_loss_weight=1.0,value_loss_weight=1.0,diagnostics=True,
+                 ranking_replay=None,ranking_batch_size=16,ranking_policy_weight=.05,
+                 ranking_value_weight=.1,ranking_value_order_weight=.05):
         self.model,self.optimizer,self.replay=model,optimizer,replay
         self.batch_size,self.after_weight=batch_size,after_weight
+        self.value_rank_weight=float(value_rank_weight)
+        self.value_label_smoothing=float(value_label_smoothing)
+        self.policy_loss_weight=float(policy_loss_weight)
+        self.value_loss_weight=float(value_loss_weight)
+        self.diagnostics_enabled=bool(diagnostics)
+        self.ranking_replay=ranking_replay;self.ranking_batch_size=ranking_batch_size
+        self.ranking_weights=(ranking_policy_weight,ranking_value_weight,ranking_value_order_weight)
         self.device=replay.device;self.cuda=self.device.type=="cuda";self.bf16=bf16 and self.cuda
         self.graph=None
-        # loss, policy, decision-value, after-value, Brier, age, gradnorm, invalid
-        self.totals=torch.zeros(8,device=self.device)
+        # loss, policy, decision-value, after-value, Brier, age, gradnorm,
+        # decision utility MSE, afterstate utility MSE, invalid, policy KL,
+        # policy top1 agreement, policy target entropy, policy signal norm,
+        # value signal norm
+        self.totals=torch.zeros(17,device=self.device)
+        self.ranking_totals=torch.zeros(5,device=self.device)
         if self.cuda and graphs:
             params={k:v.detach().clone() for k,v in model.state_dict().items()}
             old_opt={p:{k:v.clone() if torch.is_tensor(v) else copy.deepcopy(v) for k,v in state.items()}
@@ -111,7 +128,7 @@ class GraphLearner:
                     if torch.is_tensor(v):
                         if p in old_opt and k in old_opt[p]:v.copy_(old_opt[p][k])
                         else:v.zero_()
-            replay.seen.copy_(seen);self.totals.zero_();torch.cuda.set_rng_state(rng,self.device)
+            replay.seen.copy_(seen);self.totals.zero_();self.ranking_totals.zero_();torch.cuda.set_rng_state(rng,self.device)
 
     def _step(self):
         (obs,target,mask,outcome),ages=self.replay.sample(self.batch_size)
@@ -124,11 +141,29 @@ class GraphLearner:
             logits,wdl=self.model(obs)
         logits=logits.float().masked_fill(~mask.bool(),-1e9)
         pl=-(target*F.log_softmax(logits,-1)).sum(-1)
-        vl=F.cross_entropy(wdl.float(),outcome.long(),reduction="none")
+        hard=F.one_hot(outcome.long(),3).float()
+        smooth=self.value_label_smoothing
+        targets_value=hard*(1.0-smooth)+smooth/3.0
+        vl=-(targets_value*F.log_softmax(wdl.float(),-1)).sum(-1)
+        probs=wdl.float().softmax(-1)
+        utility_target=torch.where(outcome==0,1.0,torch.where(outcome==2,-1.0,0.0)).float()
+        utility_pred=probs[:,0]-probs[:,2]
+        rank_loss=(utility_pred-utility_target).square()
+        diagnostics=policy_metrics(logits,target,mask)
+        def decision_mean(values):
+            return (values*decision).sum()/decision.sum().clamp_min(1)
+        policy_signal=decision_mean((logits.softmax(-1)-target).square().sum(-1).sqrt())
         policy_loss=(pl*decision).sum()/decision.sum().clamp_min(1)
         decision_loss=(vl*decision).sum()/decision.sum().clamp_min(1)
         after_loss=(vl*after).sum()/after.sum().clamp_min(1)
-        loss=policy_loss+decision_loss+self.after_weight*after_loss
+        rank_decision=(rank_loss*decision).sum()/decision.sum().clamp_min(1)
+        rank_after=(rank_loss*after).sum()/after.sum().clamp_min(1)
+        value_signal=((wdl.float().softmax(-1)-targets_value).square().sum(-1).sqrt()).mean()
+        loss=self.policy_loss_weight*policy_loss+self.value_loss_weight*(decision_loss+self.after_weight*after_loss)+self.value_rank_weight*(rank_decision+self.after_weight*rank_after)
+        if self.ranking_replay is not None:
+            ranking=ranking_losses(self.model,self.ranking_replay.sample(self.ranking_batch_size),self.device,self.bf16)
+            loss=loss+sum(w*l for w,l in zip(self.ranking_weights,ranking[:3]))
+            self.ranking_totals.add_(torch.stack([x.detach() for x in ranking]))
         loss.backward()
         norm=torch.nn.utils.clip_grad_norm_(self.model.parameters(),1.0,foreach=True)
         self.optimizer.step()
@@ -136,17 +171,89 @@ class GraphLearner:
         brier=((probs-F.one_hot(outcome.long(),3))**2).sum(-1).mean()
         invalid=(~torch.isfinite(loss) | ~torch.isfinite(norm)).float()
         self.totals.add_(torch.stack((loss.detach(),policy_loss.detach(),decision_loss.detach(),after_loss.detach(),
-                                     brier.detach(),ages.float().mean(),norm.detach(),invalid)))
+                                     brier.detach(),ages.float().mean(),norm.detach(),
+                                     rank_decision.detach(),rank_after.detach(),invalid,
+                                     decision_mean(diagnostics["policy_target_kl"]),
+                                     decision_mean(diagnostics["policy_top1_agreement"]),
+                                     decision_mean(diagnostics["policy_target_entropy"]),
+                                     policy_signal.detach(),value_signal.detach(),
+                                     decision_mean(diagnostics["policy_top3_agreement"]),
+                                     decision_mean(diagnostics["policy_top3_target_mass"]))))
+
+    def _shared_parameters(self):
+        return [p for name,p in self.model.named_parameters()
+                if p.requires_grad and name.startswith(("factory_encoder.","input.","blocks.","norm."))]
+
+    def diagnose_gradients(self):
+        """Measure raw and configured shared-trunk gradient balance on one batch."""
+        if not self.diagnostics_enabled or self.replay.size < 1:
+            return {}
+        # Stratified deterministic reads span the ring without touching its seen
+        # counters or the CPU/CUDA RNG used for sampling and augmentation.
+        indices=((torch.arange(self.batch_size,device=self.device)*self.replay.size_gpu)//self.batch_size
+                 +self.replay.cursor_gpu)%self.replay.size_gpu
+        obs,target,mask,outcome=(getattr(self.replay,name)[indices] for name in self.replay.fields[:4])
+        obs=obs.float();target=target.float();target=target/target.sum(-1,keepdim=True).clamp_min(1e-12)
+        decision=obs[:,168]==0
+        after=~decision
+        with torch.autocast(self.device.type,dtype=torch.bfloat16,enabled=self.bf16,cache_enabled=False):
+            logits,wdl=self.model(obs)
+        logits=logits.float().masked_fill(~mask.bool(),-1e9)
+        policy=( -(target*F.log_softmax(logits,-1)).sum(-1)*decision).sum()/decision.sum().clamp_min(1)
+        hard=F.one_hot(outcome.long(),3).float()
+        smooth=self.value_label_smoothing
+        value_target=hard*(1.0-smooth)+smooth/3.0
+        value_each=-(value_target*F.log_softmax(wdl.float(),-1)).sum(-1)
+        value=(value_each*decision).sum()/decision.sum().clamp_min(1)
+        value=value+self.after_weight*(value_each*after).sum()/after.sum().clamp_min(1)
+        utility=wdl.float().softmax(-1)
+        terminal=torch.where(outcome==0,1.,torch.where(outcome==2,-1.,0.))
+        utility_loss=(utility[:,0]-utility[:,2]-terminal).square()
+        auxiliary=self.value_rank_weight*((utility_loss*decision).sum()/decision.sum().clamp_min(1)
+                         +self.after_weight*(utility_loss*after).sum()/after.sum().clamp_min(1))
+        configured=self.value_loss_weight*value+auxiliary
+        if self.ranking_replay is not None:
+            rp,rv,ro,_,_=ranking_losses(self.model,self.ranking_replay.sample(
+                self.ranking_batch_size,deterministic=True),self.device,self.bf16)
+            policy=policy+self.ranking_weights[0]/self.policy_loss_weight*rp
+            extra=self.ranking_weights[1]*rv+self.ranking_weights[2]*ro
+            configured=configured+extra
+            auxiliary=auxiliary+extra
+        shared=self._shared_parameters()
+        pg=torch.autograd.grad(policy,shared,retain_graph=True,allow_unused=True)
+        vg=torch.autograd.grad(value+auxiliary,shared,retain_graph=True,allow_unused=True)
+        configured_vg=torch.autograd.grad(configured,shared,allow_unused=True)
+        pn=torch.sqrt(sum((g.float().square().sum() for g in pg if g is not None),torch.zeros((),device=self.device)))
+        vn=torch.sqrt(sum((g.float().square().sum() for g in vg if g is not None),torch.zeros((),device=self.device)))
+        configured_norm=torch.sqrt(sum((g.float().square().sum() for g in configured_vg if g is not None),torch.zeros((),device=self.device)))
+        dot=sum(((p.float()*v.float()).sum() for p,v in zip(pg,configured_vg) if p is not None and v is not None),
+                torch.zeros((),device=self.device))
+        cosine=dot/(pn*configured_norm).clamp_min(1e-12)
+        vector=torch.stack((pn,vn,configured_norm,vn/pn.clamp_min(1e-12),
+                            configured_norm/(self.policy_loss_weight*pn).clamp_min(1e-12),
+                            cosine,(cosine<0).float())).detach().cpu().tolist()
+        return dict(zip(("policy_shared_grad_norm","value_shared_grad_norm","configured_value_shared_grad_norm",
+                         "raw_value_policy_grad_ratio","weighted_value_policy_grad_ratio",
+                         "policy_value_grad_cosine","policy_value_grad_conflict"),vector))
 
     def run(self,steps):
-        self.model.train();self.totals.zero_()
+        self.model.train();self.totals.zero_();self.ranking_totals.zero_()
         for _ in range(steps):
             if self.graph is None:self._step()
             else:self.graph.replay()
         # One required diagnostic transfer at the publication boundary, none per update.
         values=self.totals.detach().cpu().numpy()/max(1,steps)
-        if not np.isfinite(values).all() or values[-1]!=0:raise FloatingPointError("Nonfinite learner; checkpoint not written")
-        return dict(zip(("loss","policy_loss","value_loss","afterstate_loss","training_batch_brier", "sample_mean_age","gradient_norm","invalid_updates"),map(float,values)))
+        if not np.isfinite(values).all() or values[9]!=0:raise FloatingPointError("Nonfinite learner; checkpoint not written")
+        result=dict(zip(("loss","policy_loss","value_loss","afterstate_loss","training_batch_brier", "sample_mean_age","gradient_norm",
+                         "value_utility_mse","afterstate_utility_mse","invalid_updates","policy_target_kl",
+                         "policy_top1_agreement","policy_target_entropy","policy_signal_norm","value_signal_norm",
+                         "policy_top3_agreement","policy_top3_target_mass"),map(float,values)))
+        result.update(self.diagnose_gradients())
+        if self.ranking_replay is not None:
+            result.update(dict(zip(("ranking_policy_loss","continuation_value_ce","ranking_value_loss",
+                                    "ranking_policy_accuracy","ranking_value_accuracy"),
+                                   map(float,self.ranking_totals.detach().cpu().numpy()/max(1,steps)))))
+        return result
 
 
 class CheckpointJournal:

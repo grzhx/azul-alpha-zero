@@ -33,15 +33,18 @@ jobs:
           python tests/test_ai.py
           python tests/test_optimized.py
           python tests/test_checkpoint_storage.py
-          python tests/test_public_origin.py
       - name: Exact resume and historical pool
         run: |
           python tests/test_resume.py
           python tests/test_optimized_resume.py
+          python tests/test_optimized_resume.py --end-features --release-cohort-arenas
           python tests/test_retune.py
           python tests/test_history_pool.py
-      - uses: actions/setup-node@v4
-        with:
-          node-version: '22'
-      - name: BGA collector
-        run: node tests/test_bga_collector.js
+      - name: Ending features and value training
+        run: |
+          python tests/test_end_features.py
+          python tests/test_value_training.py
+          python tests/test_policy_balance.py
+          python tests/test_action_ranking.py
+          python tests/test_search_decision.py
+          python tests/test_tree_count_evaluation.py

@@ -4,6 +4,7 @@ import ctypes as C
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass, asdict
 import time
+import math
 import numpy as np
 import torch
 from azul import Batch
@@ -26,6 +27,7 @@ class Tuning:
 class NativeTuning(C.Structure):
     _fields_ = [(name, C.c_int32) for name in ("q_mode", "subtree_reuse", "cache_capacity", "symmetric_cache")] + [
         (name, C.c_float) for name in ("q_floor", "chance_coefficient", "chance_exponent", "chance_sensitivity", "afterstate_prior")]
+
 
 class StableNorm(torch.nn.LayerNorm):
     def forward(self,x):
@@ -83,7 +85,8 @@ class BucketEvaluator:
         self.metrics=dict(gpu_forward_ms=0.0,h2d_ms=0.0,d2h_ms=0.0,pack_seconds=0.0,
                           valid_leaves=0,padded_leaves=0,gpu_batches=0)
         for size in self.sizes:
-            x=torch.zeros((size,172),device=actor.device,dtype=actor.dtype)
+            input_dtype=actor.dtype
+            x=torch.zeros((size,172),device=actor.device,dtype=input_dtype)
             graph=None;output=None
             if self.cuda and graphs:
                 with torch.cuda.stream(self.stream), torch.inference_mode():
@@ -144,7 +147,7 @@ class Slot:
             self.close();raise
         self.policy=np.zeros((n,180),np.float32);self.actions=np.empty(n,np.uint16);self.values=np.empty(n,np.float32)
         self.stats=Stats();self.diag=np.zeros(4,np.uint64)
-        self.native_tuning=NativeTuning(**asdict(tuning))
+        self.native_tuning=NativeTuning(**{k:getattr(tuning,k) for k,_ in NativeTuning._fields_})
         if self.lib.azul_search_configure(self.handle,C.byref(self.native_tuning))<0:
             self.close();raise ValueError("Invalid native search tuning")
         self.future=None;self.flight=False;self.done=False
@@ -153,7 +156,19 @@ class Slot:
     def advance(self, submit=False):
         if submit:
             start=time.perf_counter()
-            Search._check(self.lib.azul_search_submit(self.handle,pointer(self.evaluator.logits),pointer(self.evaluator.values)))
+            code=self.lib.azul_search_submit(self.handle,pointer(self.evaluator.logits),pointer(self.evaluator.values))
+            if code<0:
+                ids=np.flatnonzero(self.ready_flags)
+                p=self.evaluator.logits[ids];v=self.evaluator.values[ids]
+                bad=~np.isfinite(p).all(-1)|~np.isfinite(v)|(np.abs(v)>1.00001)
+                if bad.any():
+                    from pathlib import Path
+                    destination=Path(__file__).resolve().parents[2]/"reports"/f"search-response-{self.offset}.npz"
+                    destination.parent.mkdir(parents=True,exist_ok=True)
+                    np.savez_compressed(destination,observations=self.evaluator.observations[ids[bad]],
+                        logits=p[bad],values=v[bad])
+                raise RuntimeError(f"Native submit failed: offset={self.offset}, pending={len(ids)}, "
+                    f"invalid_network_rows={int(bad.sum())}, config={self.native_cfg.simulations}")
             self.submit_seconds+=time.perf_counter()-start
         start=time.perf_counter()
         count=self.lib.azul_search_request(self.handle,pointer(self.evaluator.observations),pointer(self.ready_flags,C.c_uint8))
@@ -198,33 +213,58 @@ class PipelineSearch:
             s.native_tuning.afterstate_prior=weight
             Search._check(s.lib.azul_search_configure(s.handle,C.byref(s.native_tuning)))
 
-    def run(self,seed,active=None):
+    def release_arenas(self):
+        for slot in self.slots:
+            release=getattr(slot.lib,"azul_search_release_arenas",None)
+            if release is None:raise RuntimeError("Rebuild DLL for cohort arena reclamation")
+            release.argtypes=[C.c_void_p];release.restype=C.c_int
+            Search._check(release(slot.handle))
+
+    def run(self,seed,active=None,cancel=None,progress=None,deadline=None,tree_version=None):
+        self.deadline_reached=False
+        if deadline is not None and len(self.slots)!=1:
+            raise ValueError('Timed search requires one pipeline queue')
         if active is None:self.active.fill(1)
         else:self.active[:]=active
         wall=time.perf_counter()
         for s in self.slots:
-            Search._check(s.lib.azul_search_begin_range(s.handle,self.batch._handle,s.offset,seed,self.actor.version,pointer(self.active,C.c_uint8)))
+            version=self.actor.version if tree_version is None else int(tree_version)
+            Search._check(s.lib.azul_search_begin_range(s.handle,self.batch._handle,s.offset,seed,version,pointer(self.active,C.c_uint8)))
             s.done=s.flight=False
             s.future=self.executor.submit(s.advance) if len(self.slots)>1 else None
         remaining=len(self.slots)
         if remaining==1:
             s=self.slots[0];count=s.advance()
             while count:
+                if cancel is not None and cancel.is_set():return None
+                if progress is not None:progress()
+                if deadline is not None and time.monotonic()>=deadline:
+                    partial=getattr(s.lib,'azul_search_partial_results',None)
+                    if partial is None:raise RuntimeError('Timed search library is outdated')
+                    partial.argtypes=[C.c_void_p,C.POINTER(C.c_float),C.POINTER(C.c_uint16),C.POINTER(C.c_float),C.POINTER(Stats)]
+                    partial.restype=C.c_int
+                    if partial(s.handle,pointer(s.policy),pointer(s.actions,C.c_uint16),pointer(s.values),C.byref(s.stats))==0:
+                        self.deadline_reached=True
+                        self.actions[:]=s.actions;self.policies[:]=s.policy;self.values[:]=s.values
+                        self.metrics={'simulations':int(s.stats.simulations),'wall_seconds':time.perf_counter()-wall}
+                        return self.actions,self.policies,self.values
                 s.evaluator.launch(s.ready_flags);s.evaluator.finish();count=s.advance(True)
             s.done=True;remaining=0
         while remaining:
-            progress=False
+            if cancel is not None and cancel.is_set():return None
+            if progress is not None:progress()
+            advanced=False
             for s in self.slots:
                 if s.done:continue
                 if s.flight and s.evaluator.ready():
-                    s.evaluator.finish();s.flight=False;s.future=self.executor.submit(s.advance,True);progress=True
+                    s.evaluator.finish();s.flight=False;s.future=self.executor.submit(s.advance,True);advanced=True
                 if s.future is not None and s.future.done():
-                    count=s.future.result();s.future=None;progress=True
+                    count=s.future.result();s.future=None;advanced=True
                     if count:
                         s.evaluator.launch(s.ready_flags);s.flight=True
                     else:
                         s.done=True;remaining-=1
-            if not progress:
+            if not advanced:
                 # Yield the GIL rather than spinning while native workers/GPU run.
                 time.sleep(0)
         metrics={"wall_seconds":time.perf_counter()-wall}

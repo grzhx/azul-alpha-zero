@@ -13,6 +13,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "python"))
 from azul3 import ACTION_COUNT, OBSERVATION_SIZE, Batch3
 from azul_ai.model3 import PolicyValue3, utility_targets
 from azul_ai.search3 import Evaluator3, Search3, SearchConfig3
+from azul_ai.search_defaults import require_current_search
 
 
 def split_seed(base, i):
@@ -167,6 +168,7 @@ def train(args):
     log = out / "metrics-stable.jsonl"
     rng = np.random.default_rng(args.seed + start)
     env = Batch3(args.envs, args.threads, args.seed)
+    require_current_search(env._lib)
     search = Search3(env, SearchConfig3(simulations=args.simulations, candidates=min(args.candidates, args.simulations), max_depth=args.max_depth), args.threads)
     history_paths = [Path(x) for x in args.history if Path(x).exists()]
     history_models = [load_model(p, dev) for p in history_paths]

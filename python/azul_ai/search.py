@@ -3,6 +3,7 @@ import ctypes as C
 import numpy as np
 import torch
 from azul import Batch
+from .search_defaults import CHANCE_CAP
 
 
 @dataclass
@@ -11,7 +12,7 @@ class SearchConfig:
     candidates: int = 16
     max_depth: int = 96
     chance_initial: int = 2
-    chance_cap: int = 64
+    chance_cap: int = CHANCE_CAP
     gumbel_scale: float = 1.0
     value_scale: float = 0.1
     maxvisit_init: float = 50.0

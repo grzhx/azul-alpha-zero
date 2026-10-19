@@ -22,8 +22,10 @@ python scripts/train_optimized.py --output runs/new-run --iterations 100
 Defaults include 2,048 environment slots, 128 simulations per move, 16 root
 candidates, width 256, four residual blocks, and 500,000 replay positions.
 These are training defaults, not guaranteed optimum settings for every machine.
-The final recorded generation-1,800 model used 256 simulations, 1,000,000 replay
-positions, learning rate 1e-4, uniform replay sampling, and sample reuse 2.
+The selected generation-2,300 phase used 2,048 simulations, 1,000,000 replay
+positions, learning rate 5e-5, uniform replay sampling, sample reuse 2, ending
+features and a two-block value tower. See [Release Changes](RELEASE_2300.md).
+Defaults are intentionally separate from this historical phase.
 
 For an inexpensive installation test use the small command in the README. The
 larger defaults need substantially more memory and compute.
@@ -46,7 +48,7 @@ replay contents and metadata, RNG state, counters, and remaining sample budget.
 It reads saved protocol settings automatically and rejects incompatible explicit
 changes. Reproducibility assumes the same software/hardware protocol.
 
-Supported tuning changes require `--retune` and are recorded in `phase_history`:
+Supported tuning changes (including search, pool and ending-feature settings) require `--retune` and are recorded in `phase_history`:
 
 ```sh
 python scripts/train_optimized.py --resume runs/new-run/latest.pt --retune --iterations 200 --learning-rate 0.0001 --replay-capacity 1000000 --recent-fraction 0 --sample-reuse 2 --simulations 256
@@ -97,10 +99,50 @@ specified budgets, use the CUDA audit entry point:
 python scripts/audit_ai.py --candidate runs/new-run/actor-000200.pt --opponent runs/new-run/actor-000100.pt --budget-a 256 --budget-b 256 --pairs 500 --output runs/optimized-match.json
 ```
 
-`audit_ai.py` uses each checkpoint's tuning and requires CUDA. Do not compare its
+`audit_ai.py` uses each checkpoint's tuning and requires CUDA. Pass
+`--library` for an isolated native build; `--chance-cap 256` is available for
+explicit runtime budget matching. Do not compare its
 results interchangeably with baseline-search results. Initial seeds pair opening
 deals; later tile draws can diverge after different decisions. Truncated games are
 excluded rather than counted as draws.
+
+## Ending Features and Value Calibration
+
+`--end-features` derives 45 features on device while preserving the 172-float
+environment observation and existing replay. Added input columns initialize to
+zero; old input weights and optimizer moments migrate without changing outputs.
+
+For a new value-calibration run from a compatible actor:
+
+```sh
+python scripts/train_optimized.py --init-from runs/source/actor-001900.pt --output runs/value-run --iterations 2000 --end-features --value-tower --value-tower-blocks 2 --value-rank-weight 0.1 --value-label-smoothing 0.01 --validation-games 32 --validation-every 10
+```
+
+This is a fresh optimizer/replay/RNG run with transferred weights, not exact
+resume. Width/block settings must match the actor. `--value-rank-weight` names a
+terminal-utility MSE term; it does not supervise action order. Full-state compatible
+optimizer migration is by parameter name, not a changed parameter-list position.
+
+`--validation-games` reserves complete games outside replay. Value diagnostics
+include Brier, cross entropy, utility bias, calibration bins, and round/committed
+ending splits; policy diagnostics include target KL and top-1 agreement. They do
+not replace tournaments. Historical three-player validation remains different.
+
+`--high-simulations` and `--high-budget-period` optionally mix search budgets.
+They were disabled in the 2,201–2,300 phase. Equal budgets reuse the same arenas.
+`--release-cohort-arenas` releases obsolete native storage only between complete
+cohorts; inference buffers and CUDA Graphs remain resident.
+
+## Optional Continuation Supervision
+
+`--action-ranking-positions` defaults to zero. If enabled, selected draft snapshots
+branch through real random continuations. Finished outcomes supply soft value and
+confidence-filtered pairwise labels in a separate small replay. Unfinished branches
+are not draw labels. This predates the selected baseline but was disabled in its
+standard run. It is an experimental option, not a claimed improvement.
+
+`scripts/audit_action_ranking.py` provides a bounded read-only diagnostic, and
+`tests/test_action_ranking.py` covers branches, perspective, confidence, and storage.
 
 ## Three-Player Training
 

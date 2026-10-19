@@ -4,6 +4,8 @@
 #include "azul/search3.hpp"
 #include "azul/evaluation_cache.hpp"
 #include <memory>
+#include <cstdio>
+int azul_search_revision(void) { return 2; }
 #if defined(_M_X64) || defined(__x86_64__)
 #include <immintrin.h>
 #endif
@@ -177,6 +179,42 @@ int azul_batch_restore(AzulBatch* b, size_t i, const void* buffer, size_t bytes)
     b->states[i] = s;
     return 0;
 }
+int azul_batch_branch(AzulBatch* b, size_t count, const void* snapshots, size_t bytes,
+    const uint64_t* seeds, const uint16_t* actions, float* obs, uint8_t* perspectives,
+    AzulStepResult* results) {
+    if (!b || count > b->states.size() || !snapshots || bytes != sizeof(azul::State) ||
+        !seeds || !actions || !obs || !perspectives || !results) return -1;
+    const auto* raw = static_cast<const unsigned char*>(snapshots);
+    // Snapshot buffers need not be aligned; validate before touching any lane.
+    for (size_t i=0; i<count; ++i) {
+        azul::State s; std::memcpy(&s,raw+i*bytes,bytes);
+        if (!azul::validate(s) || !azul::legal(s,actions[i])) return -1;
+    }
+    struct Ctx { AzulBatch* b; size_t count; const unsigned char* raw;
+        const uint64_t* seeds; const uint16_t* actions; float* obs;
+        uint8_t* perspectives; AzulStepResult* results;
+    } c{b,count,raw,seeds,actions,obs,perspectives,results};
+    try {
+        b->pool.run([](void* ptr,size_t first,size_t last) noexcept {
+            const auto& c=*static_cast<Ctx*>(ptr);
+            for (auto i=first;i<std::min(last,c.count);++i) {
+                auto& s=c.b->states[i];
+                std::memcpy(&s,c.raw+i*sizeof(azul::State),sizeof(azul::State));
+                s.rng.state=c.seeds[i]; // Never inherit the real episode's future draws.
+                auto& r=c.results[i];r={};r.actor=s.current;
+                azul::apply_unchecked(s,c.actions[i]);
+                r.terminated=s.phase==azul::Phase::terminal;
+                r.round_finished=s.phase!=azul::Phase::draft;
+                r.reward=azul::terminal_reward(s,r.actor);
+                r.scores[0]=s.players[0].score;r.scores[1]=s.players[1].score;
+                c.perspectives[i]=s.current;
+                azul::observe(s,s.current,c.obs+i*azul::observation_size);
+                if (s.phase==azul::Phase::chance) azul::deal(s);
+            }
+        },&c);
+        return 0;
+    } catch (...) { return -1; }
+}
 }
 
 struct AzulSearch {
@@ -201,6 +239,26 @@ struct AzulSearch {
 };
 extern "C" {
 int azul_search_abi_version(void) { return 1; }
+int azul_ranked_continue(AzulSearch* s,int simulations) {
+    if(!s || s->trees.size()!=1 || s->failed)return -1;
+    try{s->trees[0].continue_epoch(simulations);s->ready[0]=0;return 0;}catch(...){return -1;}
+}
+int azul_ranked_begin(AzulSearch* s,const AzulBatch* b,uint64_t seed,uint64_t version) {
+    if(!s || !b || s->trees.size()!=1 || b->states.size()!=1)return -1;
+    try{s->failed=false;s->errors[0]=0;s->model_version=version;
+        s->trees[0].tuning.subtree_reuse=true;
+        s->trees[0].begin(b->states[0],seed,version,true);s->ready[0]=0;s->begun=true;return 0;
+    }catch(...){s->failed=true;return -1;}
+}
+int azul_ranked_tree_info(const AzulSearch* s,uint64_t* out) {
+    if(!s || s->trees.size()!=1 || !out)return -1;
+    out[0]=s->trees[0].stats.reused_nodes;out[1]=s->trees[0].nodes.size();return 0;
+}
+uint64_t azul_search_progress(const AzulSearch* s) {
+    uint64_t count=0;
+    if(s) for(const auto& tree:s->trees) count+=tree.stats.simulations;
+    return count;
+}
 AzulSearch* azul_search_create(size_t n,unsigned threads,const AzulSearchConfig* cfg) {
     if(!cfg || !n || n>65536) return nullptr;
     azul::SearchConfig c{cfg->simulations,cfg->candidates,cfg->max_depth,cfg->chance_initial,
@@ -272,10 +330,27 @@ int azul_search_submit(AzulSearch* s,const float* logits,const float* values) {
             for(auto i=a;i<z;++i) if(c.s->ready[i]) try {
                 if(c.s->optimized) c.s->caches[a]->put_prepared(c.s->pending_keys[i],c.s->model_version,c.p+i*azul::action_count,c.v[i]);
                 c.s->trees[i].submit(c.p+i*azul::action_count,c.v[i],true);c.s->ready[i]=0;
+            } catch(const std::exception& e) {
+                std::fprintf(stderr,"azul_search_submit root %zu: %s\n",i,e.what());c.s->errors[i]=1;
             } catch(...) {c.s->errors[i]=1;}
         },&c);
         return s->ok()?0:-1;
     } catch(...) {s->failed=true;return -1;}
+}
+int azul_search_partial_results(AzulSearch* s,float* policies,uint16_t* actions,float* values,AzulSearchStats* stats) {
+    if(!s || !s->begun || s->failed || !policies || !actions || !values) return -1;
+    for(const auto& t:s->trees) if(!t.done() && (t.nodes.empty() || !t.nodes[0].expanded || t.completed<=0)) return -1;
+    try {
+        if(stats) *stats={};
+        for(size_t i=0;i<s->trees.size();++i) {
+            const auto& t=s->trees[i];
+            t.result(policies+i*azul::action_count,actions[i],values[i],true);
+            if(stats) {stats->simulations+=t.stats.simulations;stats->evaluations+=t.stats.evaluations;
+                stats->chance_draws+=t.stats.chance_draws;stats->chance_reuses+=t.stats.chance_reuses;
+                stats->chance_duplicates+=t.stats.chance_duplicates;stats->nodes+=t.stats.nodes;}
+        }
+        return 0;
+    } catch(...) {return -1;}
 }
 int azul_search_results(AzulSearch* s,float* policies,uint16_t* actions,float* values,AzulSearchStats* stats) {
     if(!s || !s->begun || s->failed || !policies || !actions || !values) return -1;
@@ -307,8 +382,12 @@ int azul_search_configure(AzulSearch* s,const AzulSearchTuning* p) {
         !std::isfinite(p->chance_exponent) || p->chance_exponent<0 || p->chance_exponent>1 ||
         !std::isfinite(p->chance_sensitivity) || p->chance_sensitivity<0 || p->chance_sensitivity>10 ||
         !std::isfinite(p->afterstate_prior) || p->afterstate_prior<0 || p->afterstate_prior>16) return -1;
-    for(auto& tree:s->trees) tree.tuning={p->q_mode,p->q_floor,p->chance_coefficient,p->chance_exponent,
-        p->chance_sensitivity,p->afterstate_prior,p->subtree_reuse!=0};
+    for(auto& tree:s->trees) {
+        auto& t=tree.tuning;t.q_mode=p->q_mode;t.q_floor=p->q_floor;
+        t.chance_coefficient=p->chance_coefficient;t.chance_exponent=p->chance_exponent;
+        t.chance_sensitivity=p->chance_sensitivity;t.afterstate_prior=p->afterstate_prior;
+        t.subtree_reuse=p->subtree_reuse!=0;
+    }
     if(s->cache_capacity!=p->cache_capacity || s->symmetric_cache!=(p->symmetric_cache!=0))
         for(auto& cache:s->caches) cache.reset();
     s->cache_capacity=p->cache_capacity;s->symmetric_cache=p->symmetric_cache!=0;s->optimized=true;
@@ -323,8 +402,10 @@ int azul_search_begin_range(AzulSearch* s,const AzulBatch* b,size_t offset,uint6
         s->pool.run([](void* ptr,size_t a,size_t z) noexcept {
             auto& c=*static_cast<Ctx*>(ptr);
             for(auto i=a;i<z;++i) try {
+                if(c.active && !c.active[c.offset+i]) {
+                    c.s->trees[i].deactivate();c.s->trees[i].stats={};c.s->ready[i]=0;continue;
+                }
                 c.s->trees[i].begin(c.b->states[c.offset+i],azul::episode_seed(c.seed,c.offset+i),c.version);
-                if(c.active && !c.active[c.offset+i]) c.s->trees[i].deactivate();
                 c.s->ready[i]=0;
             } catch(...) {c.s->errors[i]=1;}
         },&c);
@@ -337,6 +418,16 @@ int azul_search_diagnostics(AzulSearch* s,uint64_t* out) {
     for(const auto& cache:s->caches) if(cache) {out[0]+=cache->hits;out[1]+=cache->misses;}
     for(const auto& tree:s->trees) {out[2]+=tree.stats.reused_nodes;out[3]+=tree.stats.afterstate_evaluations;}
     return 0;
+}
+int azul_search_release_arenas(AzulSearch* s) {
+    if(!s)return -1;
+    try {
+        s->pool.run([](void* ptr,size_t first,size_t last) noexcept {
+            auto* search=static_cast<AzulSearch*>(ptr);
+            for(size_t i=first;i<last;++i) {search->trees[i].release_arenas();search->ready[i]=0;}
+        },s);
+        s->begun=false;return 0;
+    }catch(...) {return -1;}
 }
 int azul_batch_step_afterstates(AzulBatch* b,const uint16_t* actions,AzulStepResult* results,float* obs,uint8_t* flags,uint8_t* perspectives) {
     if(!b || !actions || !results || !obs || !flags || !perspectives) return -1;
@@ -471,6 +562,25 @@ struct Azul3Search {
 };
 extern "C" {
 int azul3_search_abi_version(void) { return 1; }
+int azul3_ranked_continue(Azul3Search* s,int simulations) {
+    if(!s || s->trees.size()!=1 || s->failed)return -1;
+    try{s->trees[0].continue_epoch(simulations);s->ready[0]=0;return 0;}catch(...){return -1;}
+}
+int azul3_ranked_begin(Azul3Search* s,const Azul3Batch* b,uint64_t seed,uint64_t version) {
+    if(!s || !b || s->trees.size()!=1 || b->states.size()!=1)return -1;
+    try{s->failed=false;s->errors[0]=0;s->trees[0].tuning.subtree_reuse=true;
+        s->trees[0].begin(b->states[0],seed,version,true);s->ready[0]=0;s->begun=true;return 0;
+    }catch(...){s->failed=true;return -1;}
+}
+int azul3_ranked_tree_info(const Azul3Search* s,uint64_t* out) {
+    if(!s || s->trees.size()!=1 || !out)return -1;
+    out[0]=s->trees[0].stats.reused_nodes;out[1]=s->trees[0].nodes.size();return 0;
+}
+uint64_t azul3_search_progress(const Azul3Search* s) {
+    uint64_t count=0;
+    if(s) for(const auto& tree:s->trees) count+=tree.stats.simulations;
+    return count;
+}
 Azul3Search* azul3_search_create(size_t n,unsigned threads,const AzulSearchConfig* cfg) {
     if(!cfg || !n || n>65536) return nullptr;
     azul3::SearchConfig c{cfg->simulations,cfg->candidates,cfg->max_depth,cfg->chance_initial,
@@ -533,6 +643,21 @@ int azul3_search_submit(Azul3Search* s,const float* logits,const float* values) 
         },&c);
         return s->ok()?0:-1;
     } catch(...) {s->failed=true;return -1;}
+}
+int azul3_search_partial_results(Azul3Search* s,float* policies,uint16_t* actions,float* values,Azul3SearchStats* stats) {
+    if(!s || !s->begun || s->failed || !policies || !actions || !values) return -1;
+    for(const auto& t:s->trees) if(!t.done() && (t.nodes.empty() || !t.nodes[0].expanded || t.completed<=0)) return -1;
+    try {
+        if(stats) *stats={};
+        for(size_t i=0;i<s->trees.size();++i) {
+            const auto& t=s->trees[i];
+            t.result(policies+i*azul3::action_count,actions[i],values[i],true);
+            if(stats) {stats->simulations+=t.stats.simulations;stats->evaluations+=t.stats.evaluations;
+                stats->chance_draws+=t.stats.chance_draws;stats->chance_reuses+=t.stats.chance_reuses;
+                stats->chance_duplicates+=t.stats.chance_duplicates;stats->nodes+=t.stats.nodes;}
+        }
+        return 0;
+    } catch(...) {return -1;}
 }
 int azul3_search_results(Azul3Search* s,float* policies,uint16_t* actions,float* values,Azul3SearchStats* stats) {
     if(!s || !s->begun || s->failed || !policies || !actions || !values) return -1;

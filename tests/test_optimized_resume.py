@@ -8,7 +8,9 @@ import torch
 sys.path.insert(0,str(Path(__file__).resolve().parents[1]/"python"))
 from azul_ai.optimized_learning import DeviceReplay,CheckpointJournal
 
-p=argparse.ArgumentParser();p.add_argument("--device",default="cpu");args=p.parse_args()
+p=argparse.ArgumentParser();p.add_argument("--device",default="cpu");p.add_argument("--end-features",action="store_true")
+p.add_argument("--action-ranking",action="store_true")
+p.add_argument("--release-cohort-arenas",action="store_true");args=p.parse_args()
 root=Path(__file__).resolve().parents[1]
 def run(path,iterations,resume=None):
     cmd=[sys.executable,str(root/"scripts/train_optimized.py"),"--device",args.device,"--output",str(path),
@@ -17,6 +19,17 @@ def run(path,iterations,resume=None):
     else:cmd += ["--envs","4","--positions-per-update","320","--threads","2","--queues","2",
                 "--simulations","8","--candidates","4","--width","32","--blocks","1","--batch-size","32",
                 "--replay-capacity","1000","--warmup","1","--updates-per-iteration","2"]
+    if not resume and args.end_features:cmd += ["--end-features"]
+    if not resume and args.release_cohort_arenas:
+        cmd += ["--release-cohort-arenas"]
+    if not resume and args.action_ranking:
+        cmd += ["--action-ranking-positions","2","--action-ranking-topk","2",
+                "--action-ranking-rollouts","2","--action-ranking-round3-rollouts","2",
+                "--action-ranking-round45-rollouts","2","--action-ranking-max-rollouts","2",
+                "--action-ranking-simulations","4","--action-ranking-round3-simulations","4",
+                "--action-ranking-round45-simulations","8","--action-ranking-envs","8",
+                "--action-ranking-capacity","8","--action-ranking-batch-size","2",
+                ]
     completed=subprocess.run(cmd,cwd=root,capture_output=True,text=True)
     if completed.returncode:raise RuntimeError(completed.stdout+completed.stderr)
 def equal(a,b):
@@ -31,6 +44,7 @@ with tempfile.TemporaryDirectory(prefix="azul-v2-resume-") as temp:
     y=torch.load(b/"latest.pt",weights_only=False,map_location="cpu")
     for key in ("model","optimizer","iteration","updates","games","credit","mean_length","torch_rng","cuda_rng","replay_metadata"):
         assert equal(x[key],y[key]),key
+    if args.action_ranking:assert equal(x["ranking_replay"],y["ranking_replay"]),"ranking replay"
     rx=DeviceReplay(1000,"cpu");ry=DeviceReplay(1000,"cpu")
     CheckpointJournal.restore(a/"latest.pt",rx,x);CheckpointJournal.restore(b/"latest.pt",ry,y)
     for name in (*rx.fields,"seen"):

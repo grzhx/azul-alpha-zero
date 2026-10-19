@@ -3,9 +3,12 @@ import time
 import numpy as np
 from .search import pointer
 from .selfplay import results_view,split_seed
+from .action_ranking import AnchorSampler
 
 
-def collect_cohort(batch,search,seed,games,max_steps=4096,progress=None):
+def collect_cohort(batch,search,seed,games,max_steps=4096,progress=None,holdout_games=0,
+                   ranking_config=None, ranking_seed=1):
+    if holdout_games<0 or holdout_games>=games:raise ValueError("Holdout must leave training games")
     batch.reset(seed);n=batch.n;views=batch.numpy_views();result=results_view(batch)
     batch._lib.azul_batch_step_afterstates.argtypes=[C.c_void_p,C.POINTER(C.c_uint16),C.c_void_p,
         C.POINTER(C.c_float),C.POINTER(C.c_uint8),C.POINTER(C.c_uint8)]
@@ -14,12 +17,17 @@ def collect_cohort(batch,search,seed,games,max_steps=4096,progress=None):
     winners=np.full(n,-2,np.int8)
     after_obs=np.zeros((n,172),np.float32);flags=np.zeros(n,np.uint8);perspectives=np.zeros(n,np.uint8)
     observations=[];policies=[];masks=[];players=[];lanes=[]
+    sampler=AnchorSampler(ranking_config,ranking_seed) if ranking_config and ranking_config.positions else None
     metrics={};decisions=after_count=0;start=last=time.perf_counter();packing_time=0;tail_start=None
     for tick in range(max_steps):
         batch.observe();ids=np.flatnonzero(active)
-        observations.append(views["observations"][ids].astype(np.float16))
-        masks.append(views["masks"][ids].copy());players.append(views["players"][ids].copy());lanes.append(ids)
-        actions,pi,_=search.run(split_seed(seed^0xA0761D6478BD642F,tick),active)
+        current_obs=views["observations"][ids].astype(np.float16)
+        current_masks=views["masks"][ids].copy()
+        observations.append(current_obs)
+        masks.append(current_masks);players.append(views["players"][ids].copy());lanes.append(ids)
+        actions,pi,root_values=search.run(split_seed(seed^0xA0761D6478BD642F,tick),active)
+        if sampler:
+            sampler.consider(batch,ids,current_obs,current_masks,pi,actions,holdout_games,root_values)
         for k,v in search.metrics.items():metrics[k]=metrics.get(k,0)+v
         t=time.perf_counter();policies.append(pi[ids].astype(np.float16));views["actions"][:]=actions
         code=batch._lib.azul_batch_step_afterstates(batch._handle,pointer(views["actions"],C.c_uint16),
@@ -44,14 +52,20 @@ def collect_cohort(batch,search,seed,games,max_steps=4096,progress=None):
     obs=np.concatenate(observations);pi=np.concatenate(policies);mask=np.concatenate(masks)
     actor=np.concatenate(players);lane=np.concatenate(lanes);valid=winners[lane]!=-2
     outcome=np.where(winners[lane]==-1,1,np.where(winners[lane]==actor,0,2)).astype(np.uint8)
-    data=(obs[valid],pi[valid],mask[valid],outcome[valid])
+    held=valid & (lane<holdout_games)
+    training=valid & ~held
+    data=(obs[training],pi[training],mask[training],outcome[training])
     seconds=time.perf_counter()-start
     metrics.update(event="selfplay",games=int((winners!=-2).sum()),truncated=int(active.sum()),decisions=decisions,
-        positions=int(valid.sum()),decision_positions=int((valid & (obs[:,168]==0)).sum()),afterstate_positions=after_count,
+        positions=int(training.sum()),decision_positions=int((training & (obs[:,168]==0)).sum()),afterstate_positions=int((training & (obs[:,168]>0)).sum()),
         seconds=seconds,decisions_per_s=decisions/seconds,valid_leaf_fraction=metrics.get("valid_leaves",0)/max(1,metrics.get("valid_leaves",0)+metrics.get("padded_leaves",0)),
         tail_seconds=0 if tail_start is None else time.perf_counter()-tail_start,
         sample_pack_seconds=packing_time+time.perf_counter()-pack_start,
         wins0=int((winners==0).sum()),wins1=int((winners==1).sum()),draws=int((winners==-1).sum()))
+    if sampler:metrics["ranking_anchors"]=sampler.finish(winners!=-2)
+    if holdout_games:
+        metrics["holdout_data"]=(obs[held],pi[held],mask[held],outcome[held])
+        metrics["holdout_games"]=holdout_games
     return data,metrics
 
 

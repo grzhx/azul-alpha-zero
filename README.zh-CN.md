@@ -2,48 +2,55 @@
 
 [English](README.md)
 
-面向原版《花砖物语 Azul》的 C++20 内核和 GPU 纯自对弈训练框架，支持双人和三人固定彩墙。
-实现 Full Gumbel AlphaZero、显式随机补砖节点、chance 样本复用、批量并行环境和
-PyTorch 策略/价值网络；提供本地对战界面和 BGA 只读分析面板。
-不包含四人环境、灰墙变体或 Azul 系列其他游戏。
+C++20 原版 Azul 游戏内核与 GPU 纯自对弈框架，支持双人和三人固定彩墙。
+本次为**仅算法代码版本**，整理至双人 **2300 代**：Full Gumbel AlphaZero、显式随机补砖、
+工厂规范化与 chance 样本合并、批量搜索、策略/价值网络、replay、checkpoint 和离线评测。
 
-## 棋力和训练信息
+最新版源码树不包含网页前端、BGA 采集器、HTTP 服务、本地对战或浏览器自动化。
+不支持四人局、灰墙及 Azul 系列其他游戏。
 
-**双人和三人模型均远胜于所遇到的人类玩家。**
+## 棋力和发布基线
 
-双人内部评测确认的最优 checkpoint 为 **第 1800 代**。“代”指模型发布迭代，
-不是单局游戏或对固定数据集训练一遍。
+**双人和三人模型均远胜于所遇到的人类玩家。** BGA 实测所使用的浏览器工具不包含在本次算法发布中。
 
-| 项目 | 双人模型 | 三人实验 |
-| --- | --- | --- |
-| 训练进度 | 1800 次模型发布 | 已续训到 500 次迭代 |
-| 初始化 | 随机权重，纯自对弈 | 从双人第 1800 代迁移 |
-| 网络 | 工厂盘等变，宽度 256，4 个残差块 | 7 工厂等变，宽度 256，4 个残差块 |
-| 参数量 | 623,618 | 639,490 |
-| 搜索 | Full Gumbel + 随机节点 | Full Gumbel + 三维 Max-N |
-| 末期训练搜索 | 每步 256 次模拟 | 每步 64 次模拟 |
-| learner 更新 | 累计 447,533 次 | 前期每代 4 次；401-500 代每代 16 次 |
-| 完成对局 | checkpoint 计数为 4,207,953 局 | 每代 128 个并行环境，旧续训段曾重置累计计数 |
-| 实测硬件 | Ryzen 7 9800X3D + RTX 5070 Ti | 相同 CPU/GPU |
+此次选择双人 **2300 代**为发布基线。“代”是模型发布迭代，不是单局或数据集 epoch。
+模型为工厂等变网络、宽度 256、4 个共享残差块、45 维规则结束特征和独立的 2 块价值塔，
+共 **1,031,427 参数**。三人实验仍为从双人 1800 迁移的 500 代模型，639,490 参数，采用三维 Max-N。
 
-双人第 1401 代起加入自身历史对手池。1701-1800 代采用 1400/1500/1600/1699 代，
-权重 1:2:3:4，约 40% learner 策略位置来自历史对局。
-训练不使用人类棋谱、外部引擎或人工策略标签。
+2201–2300 阶段完成 **332,484 局、13,118,656 个决策样本、25,623 次更新**，已完成 cohort 零截断。
 
-1800 代以双方 256 搜索对战 1699 代，2000 局共 1068 胜、42 和、890 负，得分率
-**54.45%**，95% 配对区间 **52.375%-56.60%**。双方 1024 搜索下 1000 局得分率
-52.15%，区间 49.20%-55.10%，尚不能确认该预算下的优势。
+| 项目 | 2300 阶段配置 |
+| --- | --- |
+| 搜索 | 每步 2048 模拟、16 候选、深度 96 |
+| 并发环境 / 每代决策目标 | 2048 / 131072 |
+| chance 上限 | 256 次原始抽样，按出现次数合并概率质量 |
+| replay / batch / sample reuse | 1000000 / 1024 / 2 |
+| 学习率 | 5e-5 |
+| 历史池 | 1800 / 1900 / 2002 / 2100，权重 1:2:3:4 |
+| 历史策略样本比例 | 约 40% |
+| 策略 / 价值 / utility 辅助权重 | 1 / 1 / 0.1 |
+| 标签平滑 / afterstate loss | 0.01 / 0.25 |
+| 额外续局和动作排序监督 | 本阶段关闭 |
+| 记录硬件 | Ryzen 7 9800X3D + RTX 5070 Ti |
 
-三人训练仍属实验性。500 代是最新本机模型。
-当前三人评测晋级门槛为 0.5，而同模型基准约为 1/3；未晋级不能直接解释为退化。
-详细限制见[训练指南](docs/TRAINING.md)。
+纯自对弈不使用人类棋谱、外部引擎或人工选招标签，历史模型也来自自身训练。
+2300 对 2200 的同预算正式评测如下，平局计半分，区间按交换座位的 seed 对计算：
 
-仓库只上传源代码，模型、replay、完整训练日志和下载的规则书不随 Git 分发。
-小规模示例只验证安装，达到上述棋力需要长程训练。
+| 双方每步预算 | 局数 | 胜 / 平 / 负 | 得分率 | 配对 95% 区间 |
+| --- | ---: | --- | ---: | --- |
+| 1024 | 1000 | 541 / 13 / 446 | 54.75% | 51.65%–57.85% |
+| 2048 | 1000 | 519 / 17 / 464 | 52.75% | 49.65%–55.85% |
+| 4096 | 1000 | 533 / 11 / 456 | 53.85% | 50.75%–56.95% |
+
+后续 2400 对 2300 的三档评测均未显示可靠提升，也不能据此证明退化。
+本次排除后续规则结构/CUDA 分支、自适应 chance、均衡复用及 2400 自动续训控制器。
+完整改动范围与证据见[2300 发布说明](docs/RELEASE_2300.md)。
+
+Git 不上传模型、replay、完整日志和二进制。可从源码训练；小规模示例只用于安装检查。
 
 ## 构建和安装
 
-要求 C++20 编译器、CMake >= 3.20。内核和原生测试不依赖 Python。
+要求 C++20、CMake >= 3.20，原生测试无需 Python。
 
 ```sh
 cmake -S . -B build -DCMAKE_BUILD_TYPE=Release
@@ -51,34 +58,34 @@ cmake --build build --config Release --parallel
 ctest --test-dir build -C Release --output-on-failure
 ```
 
-Windows 安装 Visual Studio C++ 工具后可使用：
+Windows 安装 Visual Studio C++ 工具后也可运行：
 
 ```powershell
 ./scripts/build-msvc.ps1 -Configuration Release
 ```
 
-脚本自动运行双人规则、搜索和三人规则测试，输出在 `build-release/`。
-Python 自动发现 `build-release/`、`build/Release/` 或 `build/` 的动态库。
+Python 自动查找 `build-release/`、`build/Release/`、`build/`。
+可用 `--native-library` 指定独立训练库；工厂规范化要求 revision-2 动态库。
+CMake 提供 `AZUL_NATIVE`、`AZUL_SANITIZE`、`AZUL_SEARCH_MAX_SIMULATIONS`、`AZUL_ANYTIME` 可选配置。
 
-训练使用 Python >= 3.10、NumPy、PyTorch。CUDA 版本依据
-[官方安装选择器](https://pytorch.org/get-started/locally/)安装。
+Python 要求 **>= 3.11**（checkpoint 哈希使用 `hashlib.file_digest`）、NumPy 和 PyTorch。
+CUDA 版本依据[官方安装选择器](https://pytorch.org/get-started/locally/)安装。
 
 ```sh
 python -m venv .venv
-# 激活 .venv 后执行以下命令。
+# 激活 .venv 后执行。
 python -m pip install -r requirements.txt
 python examples/selfplay.py
 ```
 
-CPU 使用 `--device cpu`。GPU 支持 pinned memory、BF16 推理、CUDA Graph；
-双人优化路径另有流水线、GPU replay 和图捕获 learner。
+支持 CPU `--device cpu`；CUDA 路径使用 BF16、pinned memory、推理图、GPU replay 和 learner 图捕获。
 
-## 训练和评测
+## 训练和离线评测
 
-小规模双人安装检查：
+小规模双人检查：
 
 ```sh
-python scripts/train_optimized.py --output runs/demo --iterations 3 --envs 16 --threads 4 --queues 1 --positions-per-update 1000 --simulations 16 --candidates 8 --width 64 --blocks 2 --batch-size 64 --warmup 64 --replay-capacity 20000 --updates-per-iteration 4
+python scripts/train_optimized.py --output runs/demo --iterations 3 --envs 16 --threads 4 --queues 1 --positions-per-update 1000 --simulations 16 --candidates 8 --width 64 --blocks 2 --end-features --batch-size 64 --warmup 64 --replay-capacity 20000 --updates-per-iteration 4
 ```
 
 续训到总计 100 次发布：
@@ -87,38 +94,28 @@ python scripts/train_optimized.py --output runs/demo --iterations 3 --envs 16 --
 python scripts/train_optimized.py --resume runs/demo/latest.pt --iterations 100
 ```
 
-在两个 actor 尚未清理时评测，或先 pin：
+两个 actor 尚未清理时评测，或先 pin：
 
 ```sh
 python scripts/evaluate.py --candidate runs/demo/actor-000003.pt --opponent runs/demo/actor-000002.pt --simulations 128 --pairs 500 --output runs/evaluation.json
 ```
 
-完整配置、三人迁移、续训和模型存储见[训练指南](docs/TRAINING.md)。
-旧版 MLP 训练入口 `scripts/train.py` 保留。
+通用评测使用基础搜索接口；`scripts/audit_ai.py` 使用完整优化 tuning 和 CUDA；
+`scripts/evaluate_tree_counts.py` 比较多棵独立树的最终动作投票。不同协议的结果不能混同。
 
-## 本地对战和 BGA
-
-```sh
-python scripts/play.py --port 8765
-python scripts/monitor_bga.py --port 8770
-```
-
-本地双人对战：`http://127.0.0.1:8765/`；BGA 双人/三人面板：`http://127.0.0.1:8770/`。
-模型从 `runs/` 读取，AI 分析前需训练或提供兼容 checkpoint。
-BGA 采集器只读公开状态，不提交走棋操作。
-
-- [本地对战](docs/LOCAL_PLAY.md)
-- [手动发牌](docs/MANUAL_DEAL.md)
-- [BGA 面板](docs/BGA_MONITOR.zh-CN.md)
-- [接口约定](docs/ARCHITECTURE.md)
+- [训练指南](docs/TRAINING.md)
+- [结束特征](docs/ENDING_FEATURES.md)
+- [历史池](docs/HISTORICAL_POOL_TRAINING.md)
+- [工厂对称搜索](docs/CHANCE_FACTORY_SYMMETRY.md)
+- [接口](docs/ARCHITECTURE.md)
 - [双人规则](docs/RULES.zh-CN.md)
 - [三人规则](docs/RULES_3P.zh-CN.md)
 
 ## 源码和测试
 
-`include/azul/`、`src/` 为原生内核；`python/` 为封装、网络、训练和服务端；
-`scripts/` 为命令入口；`tests/` 保留差分规则、搜索、续训、历史池和 UI 回归；
-`web/`、`bga_web/` 为网页源码。测试命令见[英文 README](README.md#tests)。
+`include/azul/`、`src/` 为规则、搜索、C ABI 和基准；`python/` 为封装、模型、训练和存储；
+`scripts/` 为构建、离线评测与诊断入口；`tests/` 为规则差分、搜索、学习和续训测试。
+测试命令见[英文 README](README.md#tests)。
 
-观测包含三位或两位玩家的全部版面，以及分数、图案行、地板、公共砖源和颜色计数。
-不包含 RNG 或未来抽砖顺序。袋中和弃砖计数基于完整公开历史；历史缺失时，BGA 分析估计。
+观测包含所有玩家版面、分数、图案行、地板、砖源与公开历史颜色计数，不暴露 RNG 或未来抽砖。
+原生局部结果、搜索进度和连续搜索接口作为算法能力保留，不依赖网页或 HTTP。
