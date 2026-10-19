@@ -36,7 +36,6 @@ and **25,623 learner updates** with zero completed-cohort truncations. It used:
 | Policy / value / utility auxiliary weights | 1 / 1 / 0.1 |
 | Value label smoothing / afterstate loss | 0.01 / 0.25 |
 | Extra rollout/action-ranking supervision | Disabled in this phase |
-| Recorded hardware | Ryzen 7 9800X3D and RTX 5070 Ti |
 
 No human records, external-engine labels, or manually selected move targets are
 used. Historical opponents are frozen versions of the same training lineage.
